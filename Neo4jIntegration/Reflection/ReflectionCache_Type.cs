@@ -30,16 +30,17 @@ namespace Neo4jIntegration.Reflection
                     .Where(x => x is INeo4jAttribute)
                     .Cast<INeo4jAttribute>()
                     .ToArray();
-                props = buildFrom.GetProperties()
+                var p = buildFrom.GetProperties();
+                props = p
                     .ToDictionary(
-                        x => ReflectReadDictionary.textInfo.ToTitleCase(x.Name),
+                        x => x.Name.ToLower(),
                         x => new Property(x, noCheck)
                     );
                 propsInfoFirst = props.ToDictionary(x => x.Value.info, x => x.Value);
                 try
                 {
                     ID = props.Where(x => x.Value.neo4JAttributes.Where(a => a is ID).Any()).Single().Value;
-                    props.Remove(ReflectReadDictionary.textInfo.ToTitleCase(ID.Name));
+                    props.Remove(ID.Name.ToLower());
                     ID.isID = true;
                 }
                 catch

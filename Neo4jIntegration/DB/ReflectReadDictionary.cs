@@ -122,7 +122,12 @@ namespace Neo4jIntegration.Reflection
 
             foreach(object o in chl)
             {
-                object obj = ChainFillObject(map, o, directChild, singleLayer);
+                object oj = o;
+                if(oj is IObjectBacked)
+                {
+                    oj = (oj as IObjectBacked).backingObject;
+                }
+                object obj = ChainFillObject(map, oj, directChild, singleLayer);
                 doAdd.DynamicInvoke(refCol, obj);
             }
 
@@ -247,11 +252,11 @@ namespace Neo4jIntegration.Reflection
         {
             get
             {
-                return propCache.props[ReflectReadDictionary.textInfo.ToTitleCase(key)].PullValue(backingInstance);
+                return propCache.props[key.ToLower()].PullValue(backingInstance);
             }
             set
             {
-                propCache.props[ReflectReadDictionary.textInfo.ToTitleCase(key)].PushValue(backingInstance, value);
+                propCache.props[key.ToLower()].PushValue(backingInstance, value);
             }
         }
         public void WriteValidate(DependencyInjector depInj)

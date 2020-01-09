@@ -7,6 +7,7 @@ using Neo4jIntegration;
 using Neo4jIntegration.Models;
 using Neo4jIntegration.Models.Versioning;
 using Neo4jIntegration.Reflection;
+using Neo4jIntegration_Tests.TestModels;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -20,7 +21,7 @@ using System.Transactions;
 namespace plm_testing
 {
     [TestClass]
-    public class Neo4jIntegration
+    public class Neo4jIntegrationTests
     {
         [TestMethod]
         public void TestInsertStyle()
@@ -36,7 +37,7 @@ namespace plm_testing
             Color c2 = new Color();
             c2.Hex.Add("DEF987", AcceptanceState.Accepted);
             c.Template.Add(c2, AcceptanceState.RolledBack);
-            s.Colors.Add(new List<Color>(new Color[] { c }), AcceptanceState.Suggested);
+            s.Colors.Add(new ReferenceCollection<Color>(new Color[] { c }), AcceptanceState.Suggested);
             s.Template = new Style()
             {
                 Name = "Template",
@@ -51,16 +52,17 @@ namespace plm_testing
 
             s.Save(client);
             
-            var a = Neo4jSet<Style>.All(client).Include(x => x.Template.Template)
-                //.Include<Versionable<Category>, VersionableItteration<Category>, Category>(x => x.Category, c => c.Value)
-                .Include(x => x.Category)
-                .ThenIncludeCollection<ReferenceCollection<VersionableItteration<Category>>, VersionableItteration<Category>, Category>
-                    (x => x.Versions, x => x.Value)
+            var a = Neo4jSet<Style>.All(client)
+                .Include(x => x.Template.Template)
+                .IncludeCollection<ReferenceCollection<VersionableItteration<Category>>, VersionableItteration<Category>, Category>
+                    (x => x.Category.Versions, x => x.Value)
                 .Include(x => x.Colors)
-                .ThenIncludeCollection<ReferenceCollection<VersionableItteration<ICollection<Color>>>, VersionableItteration<ICollection<Color>>, ICollection<Color>>
+                .ThenIncludeCollection<ReferenceCollection<VersionableItteration<ReferenceCollection<Color>>>, VersionableItteration<ReferenceCollection<Color>>, ReferenceCollection<Color>>
                     (x => x.Versions, x => x.Value)
-                //.ThenIncludeCollection<ICollection<Color>, Color, Color>
-                //    (x => x, x => x)
+                .ThenIncludeCollection<ReferenceCollection<Color>, Color, Versionable<string>>
+                    (x => x, x => x.Hex)
+                .ThenIncludeCollection<Versionable<string>, VersionableItteration<string>, string>
+                    (x => x, x => x.Value)
                 ;
             //TODO: ReadValidate
             ReflectReadDictionary<Style>[] sOut = a.Results.ToArray();
