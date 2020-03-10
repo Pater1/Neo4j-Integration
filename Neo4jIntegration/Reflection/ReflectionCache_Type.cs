@@ -40,7 +40,6 @@ namespace Neo4jIntegration.Reflection
                 try
                 {
                     ID = props.Where(x => x.Value.neo4JAttributes.Where(a => a is ID).Any()).Single().Value;
-                    props.Remove(ID.Name.ToLower());
                     ID.isID = true;
                 }
                 catch

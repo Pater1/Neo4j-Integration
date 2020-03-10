@@ -16,14 +16,18 @@ namespace Neo4jIntegration.Models.Versioning
         public bool IsActive { get; set; } = true;
 
         [DBIgnore]
+        [JsonIgnore]
         public VersionableItteration<T> Start => ((ICollection<VersionableItteration<T>>)Versions).FirstOrDefault();
         [DBIgnore]
+        [JsonIgnore]
         public VersionableItteration<T> Last => ((ICollection<VersionableItteration<T>>)Versions).LastOrDefault();
         [DBIgnore]
+        [JsonIgnore]
         public IDictionary<AcceptanceState, T> Latest => ((IEnumerable<VersionableItteration<T>>)this)
             .GroupBy(x => x.AcceptanceState).ToDictionary(x => x.Key, x => x.LastOrDefault().Value);
 
         [ReferenceThroughRelationship((string)null)]
+        [JsonIgnore]
         public ReferenceCollection<VersionableItteration<T>> Versions { get; private set; }
             = new ReferenceCollection<VersionableItteration<T>>((a, b) => a.ItteratedTime.CompareTo(b.ItteratedTime));
 

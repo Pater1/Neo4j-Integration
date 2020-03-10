@@ -2,10 +2,13 @@
 using Neo4jClient;
 using Neo4jClient.Cypher;
 using Neo4jClient.Transactions;
+using Neo4jIntegration.Attributes;
 using Neo4jIntegration.DB;
 using Neo4jIntegration.Extentions;
 using Neo4jIntegration.Models;
 using Neo4jIntegration.Reflection;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -44,6 +47,7 @@ namespace Neo4jIntegration
         ITypeWrappedCypherFluentQuery<T, T> rootQ { get; }
         ITransactionalGraphClient client { get; }
         string quearyName { get; }
+        int PathCount { get; set; }
         List<ReadQueryParams<T>> readQueryParams { get; }
         List<PropertyInfo> pulledChildNodes { get; }
 
@@ -52,6 +56,7 @@ namespace Neo4jIntegration
     public interface ITypeWrappedCypherFluentQuery<T, S> : ITypeWrappedCypherFluentQuery<T>// where T : class, INeo4jNode, new() //where S : class, INeo4jNode, new()
     {
         public IEnumerable<ReflectReadDictionary<T>> Results { get; }
+        public int PathCount { get; set; }
 
         public ITypeWrappedCypherFluentQuery<T, S> Where(Expression<Func<T, bool>> delegat);
         public ITypeWrappedCypherFluentQuery<T, U> Include<U>(Expression<Func<T, U>> p);
@@ -97,6 +102,7 @@ namespace Neo4jIntegration
         public IEnumerable<ReflectReadDictionary<T>> Results => this.Return();
 
         public int CollectionDepth { get; private set; } = 0;
+        public int PathCount { get; set; } = 0;
 
         public static ColdTypeWrappedCypherFluentQuery<U, U> Build<U>(ITransactionalGraphClient client) //where U : class, INeo4jNode, new()
         {
@@ -109,6 +115,7 @@ namespace Neo4jIntegration
         {
             return new ColdTypeWrappedCypherFluentQuery<T, U>(source.internalQ, source.client, path)
             {
+                PathCount = source.PathCount,
                 pulledChildNodes = pulledChildNodes,
                 readQueryParams = readQueryParams,
                 quearyExpression = expression,
@@ -123,162 +130,330 @@ namespace Neo4jIntegration
         }
         private ColdTypeWrappedCypherFluentQuery(ITransactionalGraphClient client)
         {
-            internalQ = client.Cypher.Match($"({quearyName}:{labels})");
+            internalQ = client.Cypher.Match($"p0 = ({quearyName}:{labels})");
+            PathCount++;
             this.client = client;
         }
 
         private IEnumerable<ReflectReadDictionary<T>> Return()
         {
-            IEnumerable<ReadQueryParams<T>> rqp =
-                rQ.BackCopy(this).readQueryParams
-                .Distinct(new ReadQueryParams<T>())
-                .Prepend(new ReadQueryParams<T>()
-                {
-                    childName = rootQ.quearyName,
-                    Type = typeof(T)
-                })
-                .OrderBy(x => x.childName.Where(y => y == '_').Count());
-            string qName = rootQ.quearyName;
+            StringBuilder sb = new StringBuilder();
 
-            Type vr = RuntimeTypeBuilder
-                        .MyTypeBuilder
-                        .CompileResultTypeInfo(
-                                rqp
-                                .Select(x => x.IsCollection ?
-                                    new RuntimeTypeBuilder.FieldDescriptor(x.childName, typeof(IEnumerable<>).MakeGenericType(x.Type.GetGenericArguments()[0])) :
-                                    new RuntimeTypeBuilder.FieldDescriptor(x.childName, x.Type))
-                                .ToList());
-
-            ConstructorInfo cotr = vr.GetConstructors().First();
-
-            ParameterExpression inQ = Expression.Parameter(typeof(ICypherFluentQuery), "internalQ");
-
-            List<ParameterExpression> param = new List<ParameterExpression>();
-            List<MemberInfo> mems = new List<MemberInfo>();
-            List<Expression> asexps = new List<Expression>();
-
-            var az0 = typeof(ICypherResultItem).GetMethods()
-                    .Where(x => x.Name.Contains("As") && x.ContainsGenericParameters && x.GetGenericArguments().Length == 1);
-            var az = az0.OrderBy(x => x.Name.Length).First();
-
-            ParameterExpression prm = Expression.Parameter(typeof(ICypherResultItem), qName);
-            MemberInfo mem = vr.GetMember(qName).Single();
-            Expression asexp = Expression.Call(prm, az.MakeGenericMethod(typeof(T)));
-
-            foreach (ReadQueryParams<T> v in rqp)
+            //sb.Append("WITH ");
+            for (int i = 0; i < PathCount; i++)
             {
-                prm = Expression.Parameter(typeof(ICypherResultItem), v.childName);
-                param.Add(prm);
-
-                mem = vr.GetMember(v.childName).Single();
-                mems.Add(mem);
-
-                if (v.IsCollection)
+                if (i > 0)
                 {
-                    az = az0.OrderBy(x => x.Name.Length).Skip(1).First();
-                    asexp = Expression.Call(prm, az.MakeGenericMethod(v.Type.GetGenericArguments()[0]));
+                    sb.Append(" + ");
+                }
+                sb.Append($"collect(p{i})");
+            }
+            sb.Append($" AS paths{Environment.NewLine}");
+
+            sb.Append($" UNWIND paths AS ret{Environment.NewLine}");
+            sb.Append($" WITH DISTINCT ret AS dist{Environment.NewLine}");
+            sb.Append($" WITH nodes(dist) + collect(labels(nodes(dist)[0])) + collect(labels(nodes(dist)[1])) + type(relationships(dist)[0]) AS meta{Environment.NewLine}");
+            sb.Append($" with collect(meta) AS metas{Environment.NewLine}");
+            //sb.Append($" return metas
+
+            //sb.Append($"CALL apoc.convert.toTree(paths) yield value{Environment.NewLine}");
+            //sb.Append($"WITH collect(value) as vals");
+            //sb.Append("RETURN vals as json;");
+
+            internalQ = internalQ.With(sb.ToString());
+            var reter = internalQ.Return<string[][]>("metas as json");
+
+            Dictionary<string, object> nodeHeap = new Dictionary<string, object>();
+            var raw = reter.Results.Single()
+                .AsParallel()
+                .Select(x =>
+                {
+                    IDictionary<string, JToken?> parentJobj = JsonConvert.DeserializeObject<Dictionary<string, object>>(x[0])["data"] as JObject;
+                    Type parentType = parentJobj.TryGetValue("__type__", out JToken? parentTypeStr) ?
+                        ReflectionCache.BuildType(parentTypeStr.ToString(), typeof(INeo4jNode)) :
+                        ReflectionCache.BuildType(JsonConvert.DeserializeObject<string[]>(x[2]), typeof(INeo4jNode));
+                    object parentInstance = ManualDeserializeNode(
+                        parentJobj.ToDictionary(x => x.Key.ToLowerInvariant(), x => x.Value),
+                        parentType,
+                        nodeHeap
+                    );
+
+                    IDictionary<string, JToken?> childJobj = JsonConvert.DeserializeObject<Dictionary<string, object>>(x[1])["data"] as JObject;
+                    Type childType = childJobj.TryGetValue("__type__", out JToken? childTypeStr) ?
+                            ReflectionCache.BuildType(childTypeStr.ToString(), typeof(INeo4jNode)) :
+                            ReflectionCache.BuildType(JsonConvert.DeserializeObject<string[]>(x[2]), typeof(INeo4jNode));
+                    object childInstance = ManualDeserializeNode(
+                        childJobj.ToDictionary(x => x.Key.ToLowerInvariant(), x => x.Value),
+                        childType,
+                        nodeHeap
+                    );
+
+                    return ((INeo4jNode parentInstance, INeo4jNode childInstance, string relationship))(
+                        (INeo4jNode)parentInstance,
+                        (INeo4jNode)childInstance,
+                        x[4]
+                    );
+                })
+                .ToArray();
+
+            Parallel.ForEach(raw, x =>
+           {
+               //merge objects
+               ReflectionCache.Property pushProp =
+                ReflectionCache.GetTypeData(x.parentInstance).props
+                    .Where(y => y.Value.neo4JAttributes
+                        .Where(z => z is ReferenceThroughRelationship)
+                        .Cast<ReferenceThroughRelationship>()
+                        .SingleOrDefault()
+                        ?.Relationship
+                        ?.ToLowerInvariant()
+                        ==
+                        x.Item3.ToLowerInvariant()
+                        )
+                    .Select(x => x.Value)
+                    .Single()
+                    ;
+
+               object o = pushProp.PullValue(nodeHeap[x.parentInstance.Id]);
+               Type colType = typeof(ICollection<>).MakeGenericType(x.childInstance.GetType());
+               if (colType.IsAssignableFrom(pushProp.info.PropertyType))
+               {
+                   if(o == null)
+                   {
+                       o = Activator.CreateInstance(pushProp.info.PropertyType);
+                   }
+                   colType.GetMethods()
+                    .Where(x => x.Name == "Add" && x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == o.GetType())
+                    .Single()
+                    .Invoke(o, new object[] { nodeHeap[x.childInstance.Id] });
+
+                   pushProp.PushValue(nodeHeap[x.parentInstance.Id], o);
+               }
+               else
+               {
+                   pushProp.PushValue(nodeHeap[x.parentInstance.Id], nodeHeap[x.childInstance.Id]);
+               }
+           }
+            );
+
+            var ret = nodeHeap
+                //remove child-only/non-root retreived values
+                .Join(raw, x => x.Key, x => (x.Item1 as INeo4jNode)?.Id ?? "", (a, b) => a.Value as INeo4jNode)
+                .Distinct()
+                .Where(x => x != null && x is T)
+                .Cast<T>()
+                .Select(x => new ReflectReadDictionary<T>(x))
+                .ToArray();
+
+            return ret;
+        }
+
+        private static object ManualDeserializeNode(IDictionary<string, JToken> retValsJson, Type type, IDictionary<string, object> nodeHeap)
+        {
+            string key = null;
+            if (retValsJson.TryGetValue("id", out JToken kJson))
+            {
+                key = string.Intern(kJson.ToString());
+            }
+
+            if (key != null)
+            {
+                lock (key)
+                {
+                    if (!nodeHeap.ContainsKey(key))
+                    {
+                        object retInstance = ManualDeserializeNode(retValsJson, type);
+                        nodeHeap.Add(key, retInstance);
+                        return retInstance;
+                    }
+                    else
+                    {
+                        return nodeHeap[key];
+                    }
+                }
+            }
+            else
+            {
+                return ManualDeserializeNode(retValsJson, type);
+            }
+        }
+        private static object ManualDeserializeNode(IDictionary<string, JToken> retValsJson, Type retType)
+        {
+            //Type retType = ReflectionCache.BuildType(typeNames, typeof(INeo4jNode));
+            object retInstance = Activator.CreateInstance(retType);
+            Dictionary<string, ReflectionCache.Property> retProps = ReflectionCache.GetTypeData(retType).props;
+            foreach (
+                var kv in
+                retValsJson.Join(retProps, x => x.Key, x => x.Key, (a, b) => (a.Value, b.Value))
+            )
+            {
+                object push;
+                if (kv.Item1 is JValue)
+                {
+                    //push = (kv.Item1 as JValue).Value;
+                    push = kv.Item1.ToObject(kv.Item2.info.PropertyType);
                 }
                 else
                 {
-                    az = az0.OrderBy(x => x.Name.Length).First();
-                    asexp = Expression.Call(prm, az.MakeGenericMethod(v.Type));
+                    push = kv.Item1.ToObject(kv.Item2.info.PropertyType);
                 }
-
-                asexps.Add(asexp);
+                kv.Item2.PushValue(retInstance, push);
             }
-
-            Expression e0 =
-                Expression.Lambda(
-                    Expression.New(
-                        cotr,
-                        asexps,
-                        mems),
-                    param
-                )
-            ;
-
-            Type f = Expression.GetFuncType(param.Select(x => typeof(ICypherResultItem)).Append(vr).ToArray());
-
-            IEnumerable<MethodInfo> allRetunr = typeof(ICypherFluentQuery)
-                .GetMethods()
-                .Where(x => x.Name == "Return" && x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType.GetGenericArguments().Length > 0)
-                .Where(x =>
-                {
-                    Type pf = x.GetParameters()[0].ParameterType.GetGenericArguments()[0];
-                    return pf.GetGenericArguments().Length == f.GetGenericArguments().Length;
-                })
-                .ToArray();
-            MethodInfo retunr = allRetunr
-                .First()
-                .MakeGenericMethod(vr);
-            Expression retExprs = Expression.Call(
-                inQ,
-                retunr,
-                e0
-            );
-
-            PropertyInfo vals = typeof(ICypherFluentQuery<>).MakeGenericType(vr).GetProperties().Where(x => x.Name.Contains("Results")).First();
-            Expression values = Expression.Property(retExprs, vals.GetGetMethod());
-
-
-            Type rrdvr = typeof(ReflectReadDictionary<>).MakeGenericType(vr);
-            ConstructorInfo rrdvrCotr = rrdvr
-                .GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public | BindingFlags.Public)
-                .Where(x =>
-                    x.GetParameters().Length == 2)
-                .First();
-
-            var select = typeof(Enumerable).GetMethods().Where(x =>
-                x.Name.Contains("Select") &&
-                x.GetParameters().Length == 2 &&
-                x.GetParameters()[1].ParameterType.GetGenericArguments().Length == 2
-            )
-            .First();
-
-            ParameterExpression sngl = Expression.Parameter(vr, "sngl");
-            Expression wrapped = Expression.Call(
-                null,
-                select.MakeGenericMethod(vr, rrdvr),
-                values,
-                Expression.Lambda(
-                    Expression.New(rrdvrCotr, sngl, Expression.Constant(true)),
-                    sngl
-                )
-            );
-
-
-            MethodInfo collapse = rrdvr
-                .GetMethods(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public | BindingFlags.Public)
-                .Where(x => x.Name.Contains("CollapseMappingObject") && x.GetParameters().Length == 0)
-                .First();
-
-            ParameterExpression snglrrd = Expression.Parameter(rrdvr, "snglrrd");
-            Expression collapsed = Expression.Call(
-                null,
-                select.MakeGenericMethod(vr, typeof(ReflectReadDictionary<>).MakeGenericType(typeof(T))),
-                values,
-                Expression.Lambda(
-                    Expression.Call(
-                        Expression.New(rrdvrCotr, sngl, Expression.Constant(true)),
-                        collapse.MakeGenericMethod(typeof(T))
-                    ),
-                    sngl
-                )
-            );
-
-
-            LambdaExpression l0 = Expression.Lambda(retExprs, inQ);
-            Delegate d0 = l0.Compile();
-            var q0 = d0.DynamicInvoke(internalQ);
-
-            LambdaExpression l = Expression.Lambda(collapsed, inQ);
-            Delegate d = l.Compile();
-            var q = d.DynamicInvoke(internalQ) as IEnumerable<ReflectReadDictionary<T>>;
-
-
-            return q.ToList();
+            return retInstance;
         }
-        
+
+        //private IEnumerable<ReflectReadDictionary<T>> Return()s
+        //{
+        //    IEnumerable<ReadQueryParams<T>> rqp =
+        //        rQ.BackCopy(this).readQueryParams
+        //        .Distinct(new ReadQueryParams<T>())
+        //        .Prepend(new ReadQueryParams<T>()
+        //        {
+        //            childName = rootQ.quearyName,
+        //            Type = typeof(T)
+        //        })
+        //        .OrderBy(x => x.childName.Where(y => y == '_').Count());
+        //    string qName = rootQ.quearyName;
+
+        //    Type vr = RuntimeTypeBuilder
+        //                .MyTypeBuilder
+        //                .CompileResultTypeInfo(
+        //                        rqp
+        //                        .Select(x => x.IsCollection ?
+        //                            new RuntimeTypeBuilder.FieldDescriptor(x.childName, typeof(IEnumerable<>).MakeGenericType(x.Type.GetGenericArguments()[0])) :
+        //                            new RuntimeTypeBuilder.FieldDescriptor(x.childName, x.Type))
+        //                        .ToList());
+
+        //    ConstructorInfo cotr = vr.GetConstructors().First();
+
+        //    ParameterExpression inQ = Expression.Parameter(typeof(ICypherFluentQuery), "internalQ");
+
+        //    List<ParameterExpression> param = new List<ParameterExpression>();
+        //    List<MemberInfo> mems = new List<MemberInfo>();
+        //    List<Expression> asexps = new List<Expression>();
+
+        //    var az0 = typeof(ICypherResultItem).GetMethods()
+        //            .Where(x => x.Name.Contains("As") && x.ContainsGenericParameters && x.GetGenericArguments().Length == 1);
+        //    var az = az0.OrderBy(x => x.Name.Length).First();
+
+        //    ParameterExpression prm = Expression.Parameter(typeof(ICypherResultItem), qName);
+        //    MemberInfo mem = vr.GetMember(qName).Single();
+        //    Expression asexp = Expression.Call(prm, az.MakeGenericMethod(typeof(T)));
+
+        //    foreach (ReadQueryParams<T> v in rqp)
+        //    {
+        //        prm = Expression.Parameter(typeof(ICypherResultItem), v.childName);
+        //        param.Add(prm);
+
+        //        mem = vr.GetMember(v.childName).Single();
+        //        mems.Add(mem);
+
+        //        if (v.IsCollection)
+        //        {
+        //            az = az0.OrderBy(x => x.Name.Length).Skip(1).First();
+        //            asexp = Expression.Call(prm, az.MakeGenericMethod(v.Type.GetGenericArguments()[0]));
+        //        }
+        //        else
+        //        {
+        //            az = az0.OrderBy(x => x.Name.Length).First();
+        //            asexp = Expression.Call(prm, az.MakeGenericMethod(v.Type));
+        //        }
+
+        //        asexps.Add(asexp);
+        //    }
+
+        //    Expression e0 =
+        //        Expression.Lambda(
+        //            Expression.New(
+        //                cotr,
+        //                asexps,
+        //                mems),
+        //            param
+        //        )
+        //    ;
+
+        //    Type f = Expression.GetFuncType(param.Select(x => typeof(ICypherResultItem)).Append(vr).ToArray());
+
+        //    IEnumerable<MethodInfo> allRetunr = typeof(ICypherFluentQuery)
+        //        .GetMethods()
+        //        .Where(x => x.Name == "Return" && x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType.GetGenericArguments().Length > 0)
+        //        .Where(x =>
+        //        {
+        //            Type pf = x.GetParameters()[0].ParameterType.GetGenericArguments()[0];
+        //            return pf.GetGenericArguments().Length == f.GetGenericArguments().Length;
+        //        })
+        //        .ToArray();
+        //    MethodInfo retunr = allRetunr
+        //        .First()
+        //        .MakeGenericMethod(vr);
+        //    Expression retExprs = Expression.Call(
+        //        inQ,
+        //        retunr,
+        //        e0
+        //    );
+
+        //    PropertyInfo vals = typeof(ICypherFluentQuery<>).MakeGenericType(vr).GetProperties().Where(x => x.Name.Contains("Results")).First();
+        //    Expression values = Expression.Property(retExprs, vals.GetGetMethod());
+
+
+        //    Type rrdvr = typeof(ReflectReadDictionary<>).MakeGenericType(vr);
+        //    ConstructorInfo rrdvrCotr = rrdvr
+        //        .GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public | BindingFlags.Public)
+        //        .Where(x =>
+        //            x.GetParameters().Length == 2)
+        //        .First();
+
+        //    var select = typeof(Enumerable).GetMethods().Where(x =>
+        //        x.Name.Contains("Select") &&
+        //        x.GetParameters().Length == 2 &&
+        //        x.GetParameters()[1].ParameterType.GetGenericArguments().Length == 2
+        //    )
+        //    .First();
+
+        //    ParameterExpression sngl = Expression.Parameter(vr, "sngl");
+        //    Expression wrapped = Expression.Call(
+        //        null,
+        //        select.MakeGenericMethod(vr, rrdvr),
+        //        values,
+        //        Expression.Lambda(
+        //            Expression.New(rrdvrCotr, sngl, Expression.Constant(true)),
+        //            sngl
+        //        )
+        //    );
+
+
+        //    MethodInfo collapse = rrdvr
+        //        .GetMethods(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public | BindingFlags.Public)
+        //        .Where(x => x.Name.Contains("CollapseMappingObject") && x.GetParameters().Length == 0)
+        //        .First();
+
+        //    ParameterExpression snglrrd = Expression.Parameter(rrdvr, "snglrrd");
+        //    Expression collapsed = Expression.Call(
+        //        null,
+        //        select.MakeGenericMethod(vr, typeof(ReflectReadDictionary<>).MakeGenericType(typeof(T))),
+        //        values,
+        //        Expression.Lambda(
+        //            Expression.Call(
+        //                Expression.New(rrdvrCotr, sngl, Expression.Constant(true)),
+        //                collapse.MakeGenericMethod(typeof(T))
+        //            ),
+        //            sngl
+        //        )
+        //    );
+
+
+        //    LambdaExpression l0 = Expression.Lambda(retExprs, inQ);
+        //    Delegate d0 = l0.Compile();
+        //    var q0 = d0.DynamicInvoke(internalQ);
+
+        //    LambdaExpression l = Expression.Lambda(collapsed, inQ);
+        //    Delegate d = l.Compile();
+        //    var q = d.DynamicInvoke(internalQ) as IEnumerable<ReflectReadDictionary<T>>;
+
+
+        //    return q.ToList();
+        //}
+
         public ITypeWrappedCypherFluentQuery<T, S> Where(Expression<Func<T, bool>> delegat)
         {
             internalQ = internalQ.Where(Scrub(delegat));
@@ -328,7 +503,7 @@ namespace Neo4jIntegration
             string ultimateChild = fullPath.Any() ? fullPath.Last().Item1 : "";
 
             MethodInfo select = typeof(Enumerable).GetMethods().Where(x => x.Name == "Select" && x.GetParameters().Length == 2 && x.GetParameters()[1].ParameterType.GetGenericArguments().Length == 2).Single();
-            Expression<Func<IEnumerable<T>, IEnumerable<U>>>  combined = 
+            Expression<Func<IEnumerable<T>, IEnumerable<U>>> combined =
                 Expression.Lambda<Func<IEnumerable<T>, IEnumerable<U>>>(
                     Expression.Call(
                         null,
@@ -351,7 +526,8 @@ namespace Neo4jIntegration
             bccp.readQueryParams = bccp.readQueryParams.Union(
                 typeWrappedCypherFluentQuery.readQueryParams
             ).Distinct().ToList();
-            if(bccp is ColdTypeWrappedCypherFluentQuery<T, T>)
+            bccp.PathCount = PathCount;
+            if (bccp is ColdTypeWrappedCypherFluentQuery<T, T>)
             {
                 var v = (bccp as ColdTypeWrappedCypherFluentQuery<T, T>);
                 v.quearyExpression = x => x;
@@ -371,10 +547,10 @@ namespace Neo4jIntegration
             //where U : class, INeo4jNode, new()
             //where V : class, INeo4jNode, new()
         {
-            if (this.CollectionDepth > 0)
-            {
-                return CachedTypeWrappedCypherFluentQuery<T, S>.Build(this).ThenIncludeCollection(p, q);
-            }
+            //if (this.CollectionDepth > 0)
+            //{
+            //    return CachedTypeWrappedCypherFluentQuery<T, S>.Build(this).ThenIncludeCollection(p, q);
+            //}
 
             ColdTypeWrappedCypherFluentQuery<T, A> s1 = (ColdTypeWrappedCypherFluentQuery<T, A>)this.ThenInclude(p);
 
@@ -536,6 +712,8 @@ namespace Neo4jIntegration
         public ITypeWrappedCypherFluentQuery<T> AddIncludedChildNode(ReadQueryParams<T> readQueryParams) => this;
 
         public List<PropertyInfo> pulledChildNodes => null;
+
+        public int PathCount { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
 
         private Expression<F> Scrub<F>(Expression<F> delegat)
         {

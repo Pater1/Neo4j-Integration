@@ -80,7 +80,6 @@ namespace Neo4jIntegration.DB
 
             ret.queary = ret.queary.Merge($"({ret.objName}:{t.QuerySaveLabels()} {{ Id: {ret.buildFor.StrID} }})");
 
-            //Parallelize?
             bool wroteAnything = false;
             foreach (var prop in ret.buildFor.propCache.WritePropsList)
             {
@@ -96,6 +95,7 @@ namespace Neo4jIntegration.DB
                     wroteAnything = true;
                 }
             }
+            ret = (new InjectTypeName(typeof(T))).SaveValue(ret);
 
             if (ret.recursionDepth == 0)
             {

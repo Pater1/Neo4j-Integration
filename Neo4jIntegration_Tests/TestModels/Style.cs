@@ -10,8 +10,8 @@ namespace Neo4jIntegration_Tests.TestModels
     public class Style : INeo4jNode, ITemplatable<Style>
     {
         [ID(ID.IDType.String, ID.CollisionResolutionStrategy.Rand_Base62_10)]
-        public string Id { get; private set; }
-        public bool IsActive { get; private set; } = true;
+        public string Id { get; set; }
+        public bool IsActive { get; set; } = true;
 
         [EscapeString]
         public string Name { get; set; }

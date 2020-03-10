@@ -14,7 +14,6 @@ namespace Neo4jIntegration.DB
         public string parentName;
         public ReflectionCache.Property prop;
         public string childName;
-
         private Type type;
 
         public bool IsCollection => prop == null? false: prop.IsCollection;

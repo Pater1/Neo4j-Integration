@@ -10,6 +10,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
+using System.Text.Json.Serialization;
 
 namespace Neo4jIntegration.Models
 {
@@ -20,11 +21,11 @@ namespace Neo4jIntegration.Models
         public bool IsActive { get; private set; } = true;
 
         private List<ReflectReadDictionary<T>> backingCollection;
-        public ReferenceCollection(ICollection<T> backingCollection)
+        public ReferenceCollection(IEnumerable<T> backingCollection)
         {
             this.backingCollection = backingCollection.Select(x => new ReflectReadDictionary<T>(x)).ToList();
         }
-        public ReferenceCollection(ICollection<ReflectReadDictionary<T>> backingCollection)
+        public ReferenceCollection(IEnumerable<ReflectReadDictionary<T>> backingCollection)
         {
             this.backingCollection = backingCollection.ToList();
         }
@@ -44,7 +45,7 @@ namespace Neo4jIntegration.Models
             private readonly Func<ReflectReadDictionary<T>, ReflectReadDictionary<T>, int> sort;
             public FuncSort(Func<T, T, int> sort)
             {
-                this.sort = (a,b) => sort(a.backingInstance, b.backingInstance);
+                this.sort = (a, b) => sort(a.backingInstance, b.backingInstance);
                 validSort = true;
             }
             public int Compare([AllowNull] ReflectReadDictionary<T> x, [AllowNull] ReflectReadDictionary<T> y)
@@ -53,8 +54,10 @@ namespace Neo4jIntegration.Models
             }
         }
 
+        [JsonIgnore]
         public int Count => backingCollection.Count;
 
+        [JsonIgnore]
         public bool IsReadOnly => false;
 
         private struct NodeDeDup : IEqualityComparer<ReflectReadDictionary<T>>
@@ -64,10 +67,11 @@ namespace Neo4jIntegration.Models
                 T xbi = x.backingInstance;
                 T ybi = y.backingInstance;
 
-                if(xbi is INeo4jNode && ybi is INeo4jNode)
+                if (xbi is INeo4jNode && ybi is INeo4jNode)
                 {
                     return ((INeo4jNode)xbi).Id == ((INeo4jNode)ybi).Id;
-                }else if (!(xbi is INeo4jNode) && !(ybi is INeo4jNode))
+                }
+                else if (!(xbi is INeo4jNode) && !(ybi is INeo4jNode))
                 {
                     return xbi.Equals(ybi);
                 }
@@ -130,17 +134,67 @@ namespace Neo4jIntegration.Models
         }
 
         private const string relationship = "ITEM";
-        
+
+        private class WriteWrap : INeo4jNode
+        {
+            public WriteWrap(INeo4jNode wrapped)
+            {
+                Wrapped = new ReflectReadDictionary<INeo4jNode>(wrapped);
+            }
+            public WriteWrap() { }
+
+            [ID(ID.IDType.String, ID.CollisionResolutionStrategy.ErrorOut)]
+            public string Id
+            {
+                get
+                {
+                    return Wrapped.Get(x => x.Id);
+                }
+                set
+                {
+                    Wrapped.backingObject.GetType().GetProperty("Id").SetValue(Wrapped.backingObject, value);
+                }
+            }
+            public bool IsActive
+            {
+                get
+                {
+                    return Wrapped.Get(x => x.IsActive);
+                }
+                set
+                {
+                    Wrapped.backingObject.GetType().GetProperty("IsActive").SetValue(Wrapped.backingObject, value);
+                }
+            }
+            public string __type__ => $"\"{Wrapped.backingObject.GetType().QuerySaveName()}\"";
+
+            private ReflectReadDictionary<INeo4jNode> Wrapped { get; set; }
+        }
         public SaveQuearyParams<ReferenceCollection<T>> SaveValue(SaveQuearyParams<ReferenceCollection<T>> qParams)
         {
+            if (string.IsNullOrWhiteSpace(this.Id))
+            {
+                this.Id = Guid.NewGuid().ToString("n");
+            }
+
+            WriteWrap ww = new WriteWrap(this);
+
             var workingParams = qParams;
+
+            //workingParams = (new ReferenceThroughRelationship("COLLECTION") { explicitNode = ww }).SaveValue(workingParams.CrosstypedCopy(new ReflectReadDictionary<ReferenceCollection<T>>(this), 1)); //workingParams.ChainSaveNode(this);
+
+            workingParams = workingParams.ChainSaveNode(ww);
+            workingParams = DBOps<ReferenceCollection<T>>.Writes<ReferenceCollection<T>>
+                .WriteRelationship(workingParams, qParams.objName, workingParams.objName, "COLLECTION");
+
+            string nodeName = workingParams.objName;
 
             foreach (ReflectReadDictionary<T> single in backingCollection)
             {
                 if (single.backingInstance is INeo4jNode)
                 {
                     var singleParams = workingParams.ChainSaveNode((INeo4jNode)single.backingInstance);
-                    workingParams = DBOps<ReferenceCollection<T>>.Writes<ReferenceCollection<T>>.WriteRelationship(singleParams, qParams.objName, singleParams.objName, relationship);
+                    workingParams = DBOps<ReferenceCollection<T>>.Writes<ReferenceCollection<T>>.WriteRelationship(singleParams, nodeName, singleParams.objName, relationship);
                 }
             }
 

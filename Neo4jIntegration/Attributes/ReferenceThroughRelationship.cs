@@ -15,42 +15,44 @@ namespace Neo4jIntegration.Attributes
     public class ReferenceThroughRelationship : Attribute, INeo4jAttribute, ICustomDBSchema
     {
         private static Dictionary<Type, string> nameCache = new Dictionary<Type, string>();
-        private string relationship;
+        public string Relationship { get; private set; }
         private RelDir relationshipDirection;
         public ReferenceThroughRelationship(Type relationshipType, RelDir relationshipDirection = RelDir.Forward)
         {
             if (nameCache.ContainsKey(relationshipType))
             {
-                relationship = nameCache[relationshipType];
+                Relationship = nameCache[relationshipType];
             }
             else
             {
                 var relType = relationshipType.GetField("TypeKey", (BindingFlags)(~0)).GetValue(null);
                 if (relType != null)
                 {
-                    relationship = relType.ToString();
+                    Relationship = relType.ToString();
                 }
                 else
                 {
-                    relationship = relationshipType.QuerySaveName();
+                    Relationship = relationshipType.QuerySaveName();
                 }
-                nameCache.Add(relationshipType, relationship);
+                nameCache.Add(relationshipType, Relationship);
             }
             this.relationshipDirection = relationshipDirection;
         }
         public ReferenceThroughRelationship(string relationshipLabel, RelDir relationshipDirection = RelDir.Forward)
         {
-            relationship = relationshipLabel;
+            Relationship = relationshipLabel;
             this.relationshipDirection = relationshipDirection;
         }
 
+        public INeo4jNode explicitNode { get; set; } = null;
+
         public SaveQuearyParams<T> SaveValue<T>(SaveQuearyParams<T> qParams) where T : class, INeo4jNode, new()
         {
-            var RQParams = qParams.ChainSaveNode();
+            var RQParams = qParams.ChainSaveNode(explicitNode);
 
             if (RQParams.success)
             {
-                RQParams = DBOps<T>.Writes<T>.WriteRelationship(RQParams, qParams.objName, RQParams.objName, relationship, relationshipDirection);
+                RQParams = DBOps<T>.Writes<T>.WriteRelationship(RQParams, qParams.objName, RQParams.objName, Relationship, relationshipDirection);
                 qParams.queary = RQParams.queary;
             }
 
@@ -59,7 +61,7 @@ namespace Neo4jIntegration.Attributes
 
         ReadQueryParams<T> ICustomDBSchema.ReadValue<T>(ReadQueryParams<T> rParams)
         {
-            return DBOps<T>.Reads.ReadRelationship(rParams, relationship, relationshipDirection);
+            return DBOps<T>.Reads.ReadRelationship(rParams, Relationship, relationshipDirection);
         }
     }
 }

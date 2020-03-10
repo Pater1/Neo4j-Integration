@@ -19,15 +19,17 @@ namespace Neo4jIntegration.DB
                 string forward = relationshipDirection == RelDir.Forward ? ">" : "";
                 string reverse = relationshipDirection == RelDir.Reverse ? "<" : "";
 
-                string queary = $"({rParams.parentName}){reverse}-[:{relationship}]-{forward}({rParams.childName}:{rParams.prop.info.PropertyType.QuerySaveLabels()})";
+                string queary = $"p{rParams.typeWrappedCypherFluentQuery.PathCount} = ({rParams.parentName}){reverse}-[:{relationship}]-{forward}({rParams.childName}:{rParams.prop.info.PropertyType.QuerySaveLabels()})";
                 rParams.typeWrappedCypherFluentQuery.internalQ = rParams.typeWrappedCypherFluentQuery.internalQ.OptionalMatch(queary);
+
+                rParams.typeWrappedCypherFluentQuery.PathCount++;
 
                 rParams.AddIncludedChildNode();
 
                 return rParams;
             }
         }
-        public static class Writes<T> where T: class, INeo4jNode, new()
+        public static class Writes<T> where T : class, INeo4jNode, new()
         {
             public static SaveQuearyParams<T> WriteSingleInline<U>(SaveQuearyParams<T> qParams, string propName, U value)
             {
@@ -40,15 +42,21 @@ namespace Neo4jIntegration.DB
                     {
                         lock (qParams.mutex)
                         {
-                            qParams.queryParams.Add(paramName, value);
-                            qParams.queryParams.Add(paramNameSafe, value);
+                            if (qParams.queryParams != null)
+                            {
+                                qParams.queryParams.Add(paramName, value);
+                                qParams.queryParams.Add(paramNameSafe, value);
+                            }
                             qParams.queary = qParams.queary.Set($"{paramName} = {value}");
                         }
                     }
                     else
                     {
-                        qParams.queryParams.Add(paramName, value);
-                        qParams.queryParams.Add(paramNameSafe, value);
+                        if (qParams.queryParams != null)
+                        {
+                            qParams.queryParams.Add(paramName, value);
+                            qParams.queryParams.Add(paramNameSafe, value);
+                        }
                         qParams.queary = qParams.queary.Set($"{paramName} = {value}");
                     }
                 }
@@ -57,13 +65,13 @@ namespace Neo4jIntegration.DB
             }
 
             public static SaveQuearyParams<T> WriteRelationship(
-                SaveQuearyParams<T> qParams, 
-                string objName1, 
-                string objName2, 
-                string relationshipLabel, 
+                SaveQuearyParams<T> qParams,
+                string objName1,
+                string objName2,
+                string relationshipLabel,
                 RelDir relationshipDirection = RelDir.Forward)
             {
-                if(relationshipLabel == null)
+                if (relationshipLabel == null)
                 {
                     return qParams;
                 }

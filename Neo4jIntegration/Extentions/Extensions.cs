@@ -39,8 +39,7 @@ namespace Neo4jIntegration
                     }
                     ret = t.GetGenericArguments().Select(x => QuerySaveLabels(x)).Prepend(ret).Aggregate((a, b) => {
                         string delimiter =
-                            string.IsNullOrEmpty(a) ? "" :
-                            string.IsNullOrEmpty(b) ? "" : ":";
+                            string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b) ? "" : ":";
                         return $"{a}{delimiter}{b}";
                     });
                 }
@@ -57,7 +56,7 @@ namespace Neo4jIntegration
         }
         public static string QuerySaveName(this Type t)
         {
-            return t.QuerySaveLabels().Replace(":", "");
+            return t.QuerySaveLabels().Replace(":", "__");
         }
         //public static string QuerySaveLabel(this Type t)
         //{

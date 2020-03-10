@@ -19,6 +19,14 @@ namespace Neo4jIntegration.Reflection
             public bool isID;
             public readonly PropertyInfo info;
             public readonly INeo4jAttribute[] neo4JAttributes;
+
+            public static Property Dummy(bool WrittenTo = false)
+            {
+                Property ret = new Property(null);
+                ret.WrittenTo = WrittenTo;
+                return ret;
+            }
+
             public readonly ICustomDBSchema customDBSchema;
             public bool WrittenTo { get; internal set; }
 
@@ -27,6 +35,15 @@ namespace Neo4jIntegration.Reflection
             public IEnumerable<IOnWriteAttribute> onWrites => neo4JAttributes.Where(x => x is IOnWriteAttribute).Cast<IOnWriteAttribute>();
             
             public bool IsCollection => typeof(IEnumerable).IsAssignableFrom(info.PropertyType) && !typeof(NoDBCollection).IsAssignableFrom(info.PropertyType) && info.PropertyType != typeof(string);
+
+            public string JsonName => neo4JAttributes
+                .Select(x => x as ReferenceThroughRelationship)
+                .Where(x => x != null)
+                .FirstOrDefault()
+                ?.Relationship
+                ?.ToLowerInvariant() 
+                ?? 
+                Name.ToLowerInvariant();
 
             public Property(PropertyInfo buildFrom, bool noCheck)
             {
@@ -120,6 +137,8 @@ namespace Neo4jIntegration.Reflection
             }
             private Property(Property buildFrom)
             {
+                if (buildFrom == null) return;
+
                 info = buildFrom.info;
                 neo4JAttributes = buildFrom.neo4JAttributes; //clone
                 WrittenTo = false;
