@@ -18,45 +18,63 @@ namespace Neo4jIntegration.DB
 {
     public static class DBOps
     {
+
+        public static void SaveValue<T, TValue>(LiveDbObject<T> liveDbObject, Property prop, TValue value, Func<ITransactionalGraphClient> graphClientFactory)
+        {
+            using (ITransactionalGraphClient graphClient = graphClientFactory())
+            {
+                ICypherFluentQuery cypherFluentQuery = graphClient.Cypher;
+
+                cypherFluentQuery = cypherFluentQuery.Merge($"(objec:{typeof(T).QuerySaveLabels()} {{ Id: {Neo4jEncode(liveDbObject["Id"])} }})");
+                cypherFluentQuery = cypherFluentQuery.Set($"objec.{prop.jsonName} = {Neo4jEncode(value)}");
+
+                cypherFluentQuery.ExecuteWithoutResults();
+            }
+        }
         public static void SaveNode<T>(LiveDbObject<T> toSave, Func<ITransactionalGraphClient> graphClientFactory) where T : INeo4jNode
         {
             Dictionary<string, (string, bool)> savedIds = new Dictionary<string, (string, bool)>();
             using (ITransactionalGraphClient graphClient = graphClientFactory())
             {
-                Neo4jClient.Cypher.ICypherFluentQuery cypherFluentQuery = graphClient.Cypher;
+                //graphClient.BeginTransaction();
 
-                var parms = SaveNodeInline(toSave, (cypherFluentQuery, savedIds), null, graphClientFactory);
+                ICypherFluentQuery cypherFluentQuery = graphClient.Cypher;
+                (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms
+                    = SaveNodeInline(toSave, (cypherFluentQuery, savedIds), "root", graphClientFactory);
                 parms.query.ExecuteWithoutResults();
+
+                //graphClient.EndTransaction();
             }
         }
 
+        //private static (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) __SaveEnumerableNodeRelationship((object o, System.Type t) p1, (object o, System.Type t) p2, string relationshipName, (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2)
+        //{
+        //    if (p1.o == null || p2.o == null)
+        //    {
+        //        return parms;
+        //    }
 
-        private static (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) __SaveEnumerableNodeRelationship((object o, System.Type t) p1, (object o, System.Type t) p2, string relationshipName, (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2)
-        {
-            if (p1.o == null || p2.o == null)
-            {
-                return parms;
-            }
-
-            MethodInfo meinf = typeof(DBOps)
-                .GetMethod(nameof(DBOps._SaveEnumerableNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
-                .MakeGenericMethod(p1.t);
-            ConstructorInfo contr = typeof(LiveDbObject<>).MakeGenericType(p1.t).GetConstructors().Where(x => x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == p1.t).Single();
-            //TODO: paramaterize & cache
-            LambdaExpression l = Expression.Lambda(
-                Expression.Call(
-                    null,
-                    meinf,
-                    Expression.New(contr, Expression.Convert(Expression.Constant(p1.o), p1.t)),
-                    Expression.Constant(p2),
-                    Expression.Constant(relationshipName),
-                    Expression.Constant(parms),
-                    Expression.Constant(forceNodeName1),
-                    Expression.Constant(forceNodeName2)
-                )
-            );
-            return ((ICypherFluentQuery query, Dictionary<string, (string, bool)> ids))l.Compile().DynamicInvoke();
-        }
+        //    MethodInfo meinf = typeof(DBOps)
+        //        .GetMethod(nameof(DBOps._SaveEnumerableNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
+        //        .MakeGenericMethod(p1.t);
+        //    MethodInfo contr = typeof(LiveDbObject<>).MakeGenericType(p1.t).GetMethod(nameof(LiveDbObject<int>.Build), BindingFlags.Static);
+        //    //ConstructorInfo contr = typeof(LiveDbObject<>).MakeGenericType(p1.t).GetConstructors(BindingFlags.NonPublic).Where(x => x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == p1.t).Single();
+        //    //TODO: paramaterize & cache
+        //    LambdaExpression l = Expression.Lambda(
+        //        Expression.Call(
+        //            null,
+        //            meinf,
+        //            Expression.Call(null, contr, Expression.Convert(Expression.Constant(p.o), p.t), Expression.Constant(graphClientFactory), Expression.Constant(LiveObjectMode.IgnoreWrite)),
+        //            //Expression.New(contr, Expression.Convert(Expression.Constant(p1.o), p1.t)),
+        //            Expression.Constant(p2),
+        //            Expression.Constant(relationshipName),
+        //            Expression.Constant(parms),
+        //            Expression.Constant(forceNodeName1),
+        //            Expression.Constant(forceNodeName2)
+        //        )
+        //    );
+        //    return ((ICypherFluentQuery query, Dictionary<string, (string, bool)> ids))l.Compile().DynamicInvoke();
+        //}
 
         private static (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) _SaveEnumerableNodeRelationship<T>(LiveDbObject<T> toSave, (object o, System.Type t) p, string relationshipName, (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2, Func<ITransactionalGraphClient> graphClientFactory) where T : INeo4jNode
         {
@@ -69,7 +87,9 @@ namespace Neo4jIntegration.DB
                 .GetMethod(nameof(DBOps.SaveEnumerableNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
                 .MakeGenericMethod(typeof(T), p.t);
             System.Type rrdt = typeof(LiveDbObject<>).MakeGenericType(p.t);
-            ConstructorInfo contr = rrdt.GetConstructors().Where(x => x.GetParameters().Length == 2 && x.GetParameters()[0].ParameterType == p.t).Single();
+
+            MethodInfo contr = typeof(LiveDbObject<>).MakeGenericType(p.t).GetMethods(BindingFlags.Static | BindingFlags.Public).Where(x => x.Name == "Build").Single(); ;
+            //ConstructorInfo contr = rrdt.GetConstructors().Where(x => x.GetParameters().Length == 3 && x.GetParameters()[0].ParameterType == p.t).Single();
 
             MethodInfo select = typeof(Enumerable).GetMethods()
                 .Where(x => x.Name == "Select")
@@ -78,7 +98,7 @@ namespace Neo4jIntegration.DB
                 .First();
             ParameterExpression selectParam = Expression.Parameter(p.t, "x");
             LambdaExpression selectFunc = Expression.Lambda(
-                    Expression.New(contr, Expression.Convert(selectParam, p.t), Expression.Constant(graphClientFactory)),
+                    Expression.Call(null, contr, Expression.Convert(selectParam, p.t), Expression.Constant(graphClientFactory), Expression.Constant(LiveObjectMode.IgnoreWrite)),
                     selectParam
             );
 
@@ -97,7 +117,7 @@ namespace Neo4jIntegration.DB
                     Expression.Constant(relationshipName),
                     Expression.Constant(parms),
                     Expression.Constant(forceNodeName1),
-                    Expression.Constant(forceNodeName2), 
+                    Expression.Constant(forceNodeName2),
                     Expression.Constant(graphClientFactory)
                 )
             );
@@ -114,24 +134,24 @@ namespace Neo4jIntegration.DB
             MethodInfo meinf = typeof(DBOps)
                 .GetMethod(nameof(DBOps.SaveNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
                 .MakeGenericMethod(typeof(T), p.t);
-            ConstructorInfo contr = typeof(LiveDbObject<>).MakeGenericType(p.t).GetConstructors().Where(x => x.GetParameters().Length == 2 && x.GetParameters()[0].ParameterType == p.t).Single();
+            MethodInfo contr = typeof(LiveDbObject<>).MakeGenericType(p.t).GetMethods(BindingFlags.Static | BindingFlags.Public).Where(x => x.Name == "Build").Single();
             //TODO: paramaterize & cache
             LambdaExpression l = Expression.Lambda(
                 Expression.Call(
                     null,
                     meinf,
                     Expression.Constant(toSave),
-                    Expression.New(contr, Expression.Convert(Expression.Constant(p.o), p.t), Expression.Constant(graphClientFactory)),
+                    Expression.Call(null, contr, Expression.Convert(Expression.Constant(p.o), p.t), Expression.Constant(graphClientFactory), Expression.Constant(LiveObjectMode.IgnoreWrite)),
+                    //Expression.New(contr, Expression.Convert(Expression.Constant(p.o), p.t), Expression.Constant(graphClientFactory), Expression.Constant(LiveObjectMode.IgnoreWrite)),
                     Expression.Constant(relationshipName),
                     Expression.Constant(parms),
                     Expression.Constant(forceNodeName1),
-                    Expression.Constant(forceNodeName2), 
+                    Expression.Constant(forceNodeName2),
                     Expression.Constant(graphClientFactory)
                 )
             );
             return ((ICypherFluentQuery query, Dictionary<string, (string, bool)> ids))l.Compile().DynamicInvoke();
         }
-
 
         private static (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) SaveNodeInline<T>(LiveDbObject<T> toSave, (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName, Func<ITransactionalGraphClient> graphClientFactory) where T : INeo4jNode
         {
@@ -184,11 +204,8 @@ namespace Neo4jIntegration.DB
                     .Distinct()
                     .ToArray();
                 System.Type enuT = enuTs.FirstOrDefault();
-                System.Type enu = enuT != null ? typeof(IEnumerable<>).MakeGenericType(enuT) : null;
 
-                string relationshipName =
-                    v.neo4JAttributes.Where(x => x is DbNameAttribute).Cast<DbNameAttribute>().SingleOrDefault()?.Name
-                    ?? v.info.Name;
+                string relationshipName = v.jsonName;
                 if (typeof(INeo4jNode).IsAssignableFrom(t))
                 {
                     parms = _SaveNodeRelationship(toSave, (o, t), relationshipName, parms, nodeName, $"{nodeName}_{relationshipName}", graphClientFactory);
@@ -259,7 +276,7 @@ namespace Neo4jIntegration.DB
             }
 
             parms = SaveNodeInline(toSave, parms, forceNodeName1, graphClientFactory);
-            parms.query = parms.query.Merge($"(_{parms.ids[id1].Item1})-[:{relationshipName}]->(_{parms.ids[id2].Item1}{(parms.ids[id2].Item2? "": $":{typeof(U).QuerySaveLabels()}")})");
+            parms.query = parms.query.Merge($"(_{parms.ids[id1].Item1})-[:{relationshipName}]->(_{parms.ids[id2].Item1}{(parms.ids[id2].Item2 ? "" : $":{typeof(U).QuerySaveLabels()}")})");
             parms = SaveNodeInline(toSaveB, parms, forceNodeName2, graphClientFactory);
 
             return parms;
@@ -274,7 +291,7 @@ namespace Neo4jIntegration.DB
             }
             return parms;
         }
-        
+
         private static string Neo4jEncode(object o, System.Type t = null)
         {
             if (t == null && o != null)

@@ -175,7 +175,7 @@ namespace Neo4jIntegration
                 .Distinct()//TODO: dedupe on ID, rather than pointer
                 .Where(x => x != null && x is T)
                 .Cast<T>()
-                .Select(x => new LiveDbObject<T>(x, clientFactory))
+                .Select(x => LiveDbObject<T>.Build(x, clientFactory, LiveObjectMode.LiveWrite))
                 .ToArray();
 
             return ret;

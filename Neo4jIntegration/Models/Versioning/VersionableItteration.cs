@@ -48,6 +48,7 @@ namespace Neo4jIntegration.Models.Versioning
 
         public DateTime ItteratedTime { get; set; }
 
+        [DbName("VALUE")]
         public T Value { get; set; }
 
         public AcceptanceState AcceptanceState { get; set; }

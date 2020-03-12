@@ -16,7 +16,6 @@ namespace Neo4jIntegration.Reflection
             public readonly INeo4jAttribute[] neo4JAttributes;
             public readonly Property? ID;
             public readonly Dictionary<string, Property> props;
-            public readonly Dictionary<PropertyInfo, Property> propsInfoFirst;
             public IEnumerable<string> PropNames => props.Select(x => x.Key);
             public string Name => cachedType.Name;
            
@@ -32,7 +31,6 @@ namespace Neo4jIntegration.Reflection
                         x => x.Name,
                         x => new Property(x)
                     );
-                propsInfoFirst = props.ToDictionary(x => x.Value.info, x => x.Value);
                 try
                 {
                     ID = props.Where(x => x.Value.isID).Single().Value;

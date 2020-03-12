@@ -1,4 +1,8 @@
 ﻿using Neo4jClient.Transactions;
+using Neo4jIntegration.Attributes;
+using Neo4jIntegration.DB;
+using Neo4jIntegration.Models;
+using Neo4jIntegration.Reflection;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -6,24 +10,62 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Threading;
 
-namespace Neo4jIntegration.Reflection
+namespace Neo4jIntegration.DB
 {
     public class LiveDbObject<T> : IReadOnlyList<string>, IReadOnlyDictionary<string, object>
     {
         public static ReflectionCache.Type PropCache { get; } = ReflectionCache.GetTypeData(typeof(T));
+        private static Dictionary<string, LiveDbObject<T>> livePool { get; } = new Dictionary<string, LiveDbObject<T>>();
+
         public T BackingInstance { get; }
         public Func<ITransactionalGraphClient> GraphClientFactory { get; }
+        public LiveObjectMode LiveMode { get; }
 
         public static implicit operator T(LiveDbObject<T> rrdt)
         {
             return rrdt.BackingInstance;
         }
 
-        public LiveDbObject(T backingInstance, Func<ITransactionalGraphClient> graphClientFactory)
+        public static LiveDbObject<T> Build(T buildFor, Func<ITransactionalGraphClient> graphClient, LiveObjectMode liveMode)
+        {
+            LiveDbObject<T> ret = null;
+            if (buildFor is INeo4jNode)
+            {
+                INeo4jNode node = buildFor as INeo4jNode;
+
+                if (string.IsNullOrWhiteSpace(node.Id))
+                {
+                    node.Id = LiveDbObject<T>.PropCache.props["Id"].neo4JAttributes
+                        .Where(x => x is IDAttribute)
+                        .Cast<IDAttribute>()
+                        .Select(x => x.GenerateId())
+                        .Single();
+
+                    ret = new LiveDbObject<T>(buildFor, graphClient, liveMode);
+                    livePool.Add(node.Id, ret);
+                    return ret;
+                }
+                else if (livePool.TryGetValue(node.Id, out ret))
+                {
+                    return ret;
+                }
+                else
+                {
+                    ret = new LiveDbObject<T>(buildFor, graphClient, liveMode);
+                    livePool.Add(node.Id, ret);
+                    return ret;
+
+                }
+            }
+            return new LiveDbObject<T>(buildFor, graphClient, liveMode);
+        }
+        private LiveDbObject(T backingInstance, Func<ITransactionalGraphClient> graphClientFactory, LiveObjectMode liveMode)
         {
             BackingInstance = backingInstance;
             GraphClientFactory = graphClientFactory;
+            LiveMode = liveMode;
         }
 
         public LiveDbObject<T> Exclude(IEnumerable<string> excludes)
@@ -53,9 +95,19 @@ namespace Neo4jIntegration.Reflection
         public void Set<TValue>(Expression<Func<T, TValue>> expression, TValue value)
         {
             var member = (expression.Body as MemberExpression).Member as PropertyInfo;
+            var prop = PropCache.props[member.Name];
 
-            var rt = PropCache.props[member.Name];
-            PropCache.props[member.Name] = rt;
+            if ((LiveMode & LiveObjectMode.LiveWrite) != 0)
+            {
+                DBOps.SaveValue(this, prop, value, GraphClientFactory);
+            }
+            else if ((LiveMode & LiveObjectMode.DeferedWrite) != 0)
+            {
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    DBOps.SaveValue(this, prop, value, GraphClientFactory);
+                });
+            }
 
             member.SetValue(BackingInstance, value);
         }
@@ -66,9 +118,25 @@ namespace Neo4jIntegration.Reflection
         }
         public TValue Get<TValue>(Expression<Func<T, TValue>> expression)
         {
-            var member = (expression.Body as MemberExpression).Member as PropertyInfo;
 
-            return (TValue)member.GetValue(BackingInstance);
+            if ((LiveMode & LiveObjectMode.LiveRead) != 0)
+            {
+                TValue remote = Neo4jSet<T>.All(GraphClientFactory).Include(expression).Results.Where(x => x["Id"] == this["Id"]).Select(x => x.Get(expression)).Cast<TValue>().SingleOrDefault();
+                Set(expression, remote);
+                return remote;
+            }
+            else if ((LiveMode & LiveObjectMode.DeferedRead) != 0)
+            {
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    TValue remote = Neo4jSet<T>.All(GraphClientFactory).Include(expression).Results.Where(x => x["Id"] == this["Id"]).Select(x => x.Get(expression)).Cast<TValue>().SingleOrDefault();
+                    Set(expression, remote);
+                });
+            }
+            //TODO: get via CacheProperty to avoid recursion
+            var member = (expression.Body as MemberExpression).Member as PropertyInfo;
+            TValue local = (TValue)member.GetValue(BackingInstance);
+            return local;
         }
 
         public string this[int index] => PropCache.PropNames.ElementAt(index);
@@ -111,9 +179,9 @@ namespace Neo4jIntegration.Reflection
             return success;
         }
 
-        IEnumerator IEnumerable.GetEnumerator() 
+        IEnumerator IEnumerable.GetEnumerator()
             => ((IReadOnlyDictionary<string, object>)this).GetEnumerator();
-        
+
         IEnumerator<KeyValuePair<string, object>> IEnumerable<KeyValuePair<string, object>>.GetEnumerator()
             => ((IReadOnlyDictionary<string, object>)this).GetEnumerator();
 

@@ -15,6 +15,7 @@ namespace Neo4jIntegration.Models.Versioning
         public string Id { get; set; }
         public bool IsActive { get; set; } = true;
 
+        [DbName("FIRST")]
         public VersionableItteration<T> Start
         {
             get => start; private set
@@ -26,6 +27,7 @@ namespace Neo4jIntegration.Models.Versioning
                 }
             }
         }
+        [DbName("LAST")]
         public VersionableItteration<T> Last
         {
             get => last; private set

@@ -16,7 +16,7 @@ namespace Neo4jIntegration.DB
         }
         public static LiveDbObject<T> Save<T>(this T buildFor, Func<ITransactionalGraphClient> graphClientFactory) where T : INeo4jNode
         {
-            LiveDbObject<T> ret = buildFor.Build(graphClientFactory);
+            LiveDbObject<T> ret = LiveDbObject<T>.Build(buildFor, graphClientFactory, LiveObjectMode.Ignore);
             ret.Save(graphClientFactory);
             return ret;
         }
@@ -28,11 +28,6 @@ namespace Neo4jIntegration.DB
         public static bool Save<T>(this LiveDbObject<T> buildFor, ITransactionalGraphClient graphClient) where T : INeo4jNode
         {
             return buildFor.Save(() => graphClient);
-        }
-
-        public static LiveDbObject<T> Build<T>(this T buildFor, Func<ITransactionalGraphClient> graphClient) where T : INeo4jNode
-        {
-            return new LiveDbObject<T>(buildFor, graphClient);
         }
     }
 
