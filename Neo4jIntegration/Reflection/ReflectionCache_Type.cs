@@ -10,56 +10,44 @@ namespace Neo4jIntegration.Reflection
 {
     public partial class ReflectionCache
     {
-        public class Type
+        public readonly struct Type
         {
-            public System.Type cachedType;
-            public INeo4jAttribute[] neo4JAttributes;
-            public Property ID;
-            public Dictionary<string, Property> props;
-            public Dictionary<PropertyInfo, Property> propsInfoFirst;
-            public IEnumerable<Property> WritePropsList => props.Select(x => x.Value).Except(new ReflectionCache.Property[] { ID }).Prepend(ID);
+            public readonly System.Type cachedType;
+            public readonly INeo4jAttribute[] neo4JAttributes;
+            public readonly Property? ID;
+            public readonly Dictionary<string, Property> props;
+            public readonly Dictionary<PropertyInfo, Property> propsInfoFirst;
             public IEnumerable<string> PropNames => props.Select(x => x.Key);
             public string Name => cachedType.Name;
            
-            public Type(System.Type buildFrom, bool noCheck)
+            public Type(System.Type buildFrom)
             {
                 cachedType = buildFrom;
                 neo4JAttributes = buildFrom.GetCustomAttributes(true)
                     .Where(x => x is INeo4jAttribute)
                     .Cast<INeo4jAttribute>()
                     .ToArray();
-                var p = buildFrom.GetProperties();
-                props = p
+                props = buildFrom.GetProperties()
                     .ToDictionary(
-                        x => x.Name.ToLower(),
-                        x => new Property(x, noCheck)
+                        x => x.Name,
+                        x => new Property(x)
                     );
                 propsInfoFirst = props.ToDictionary(x => x.Value.info, x => x.Value);
                 try
                 {
-                    ID = props.Where(x => x.Value.neo4JAttributes.Where(a => a is IDAttribute).Any()).Single().Value;
-                    ID.isID = true;
+                    ID = props.Where(x => x.Value.isID).Single().Value;
                 }
                 catch
                 {
-                    if (!noCheck && typeof(INeo4jNode).IsAssignableFrom(buildFrom))
+                    if (typeof(INeo4jNode).IsAssignableFrom(buildFrom))
                     {
                         throw new ArgumentException("All types of INeo4jNode must declare an ID (and only one ID)");
                     }
+                    else
+                    {
+                        ID = null;
+                    }
                 }
-            }
-            private Type(Type buildFrom)
-            {
-                cachedType = buildFrom.cachedType;
-                neo4JAttributes = buildFrom.neo4JAttributes.ToArray(); //clone
-                props = buildFrom.props.ToDictionary(x => x.Key, x => x.Value.DeepClone()); //clone
-                propsInfoFirst = props.ToDictionary(x => x.Value.info, x => x.Value);
-                ID = buildFrom.ID;
-            }
-
-            public Type DeepClone()
-            {
-                return new Type(this);
             }
         }
     }

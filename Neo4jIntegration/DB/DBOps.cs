@@ -18,13 +18,16 @@ namespace Neo4jIntegration.DB
 {
     public static class DBOps
     {
-        public static void SaveNode<T>(ReflectReadDictionary<T> toSave, ITransactionalGraphClient client) where T : INeo4jNode
+        public static void SaveNode<T>(LiveDbObject<T> toSave, Func<ITransactionalGraphClient> graphClientFactory) where T : INeo4jNode
         {
             Dictionary<string, (string, bool)> savedIds = new Dictionary<string, (string, bool)>();
-            Neo4jClient.Cypher.ICypherFluentQuery v = client.Cypher;
+            using (ITransactionalGraphClient graphClient = graphClientFactory())
+            {
+                Neo4jClient.Cypher.ICypherFluentQuery cypherFluentQuery = graphClient.Cypher;
 
-            var parms = SaveNodeInline(toSave, (v, savedIds));
-            parms.query.ExecuteWithoutResults();
+                var parms = SaveNodeInline(toSave, (cypherFluentQuery, savedIds), null, graphClientFactory);
+                parms.query.ExecuteWithoutResults();
+            }
         }
 
 
@@ -38,7 +41,7 @@ namespace Neo4jIntegration.DB
             MethodInfo meinf = typeof(DBOps)
                 .GetMethod(nameof(DBOps._SaveEnumerableNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
                 .MakeGenericMethod(p1.t);
-            ConstructorInfo contr = typeof(ReflectReadDictionary<>).MakeGenericType(p1.t).GetConstructors().Where(x => x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == p1.t).Single();
+            ConstructorInfo contr = typeof(LiveDbObject<>).MakeGenericType(p1.t).GetConstructors().Where(x => x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == p1.t).Single();
             //TODO: paramaterize & cache
             LambdaExpression l = Expression.Lambda(
                 Expression.Call(
@@ -55,7 +58,7 @@ namespace Neo4jIntegration.DB
             return ((ICypherFluentQuery query, Dictionary<string, (string, bool)> ids))l.Compile().DynamicInvoke();
         }
 
-        private static (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) _SaveEnumerableNodeRelationship<T>(ReflectReadDictionary<T> toSave, (object o, System.Type t) p, string relationshipName, (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2) where T : INeo4jNode
+        private static (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) _SaveEnumerableNodeRelationship<T>(LiveDbObject<T> toSave, (object o, System.Type t) p, string relationshipName, (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2, Func<ITransactionalGraphClient> graphClientFactory) where T : INeo4jNode
         {
             if (p.o == null)
             {
@@ -65,8 +68,8 @@ namespace Neo4jIntegration.DB
             MethodInfo meinf = typeof(DBOps)
                 .GetMethod(nameof(DBOps.SaveEnumerableNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
                 .MakeGenericMethod(typeof(T), p.t);
-            System.Type rrdt = typeof(ReflectReadDictionary<>).MakeGenericType(p.t);
-            ConstructorInfo contr = rrdt.GetConstructors().Where(x => x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == p.t).Single();
+            System.Type rrdt = typeof(LiveDbObject<>).MakeGenericType(p.t);
+            ConstructorInfo contr = rrdt.GetConstructors().Where(x => x.GetParameters().Length == 2 && x.GetParameters()[0].ParameterType == p.t).Single();
 
             MethodInfo select = typeof(Enumerable).GetMethods()
                 .Where(x => x.Name == "Select")
@@ -75,7 +78,7 @@ namespace Neo4jIntegration.DB
                 .First();
             ParameterExpression selectParam = Expression.Parameter(p.t, "x");
             LambdaExpression selectFunc = Expression.Lambda(
-                    Expression.New(contr, Expression.Convert(selectParam, p.t)),
+                    Expression.New(contr, Expression.Convert(selectParam, p.t), Expression.Constant(graphClientFactory)),
                     selectParam
             );
 
@@ -94,13 +97,14 @@ namespace Neo4jIntegration.DB
                     Expression.Constant(relationshipName),
                     Expression.Constant(parms),
                     Expression.Constant(forceNodeName1),
-                    Expression.Constant(forceNodeName2)
+                    Expression.Constant(forceNodeName2), 
+                    Expression.Constant(graphClientFactory)
                 )
             );
             return ((ICypherFluentQuery query, Dictionary<string, (string, bool)> ids))l.Compile().DynamicInvoke();
         }
 
-        private static (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) _SaveNodeRelationship<T>(ReflectReadDictionary<T> toSave, (object o, System.Type t) p, string relationshipName, (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2) where T : INeo4jNode
+        private static (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) _SaveNodeRelationship<T>(LiveDbObject<T> toSave, (object o, System.Type t) p, string relationshipName, (ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2, Func<ITransactionalGraphClient> graphClientFactory) where T : INeo4jNode
         {
             if (p.o == null)
             {
@@ -110,25 +114,26 @@ namespace Neo4jIntegration.DB
             MethodInfo meinf = typeof(DBOps)
                 .GetMethod(nameof(DBOps.SaveNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
                 .MakeGenericMethod(typeof(T), p.t);
-            ConstructorInfo contr = typeof(ReflectReadDictionary<>).MakeGenericType(p.t).GetConstructors().Where(x => x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == p.t).Single();
+            ConstructorInfo contr = typeof(LiveDbObject<>).MakeGenericType(p.t).GetConstructors().Where(x => x.GetParameters().Length == 2 && x.GetParameters()[0].ParameterType == p.t).Single();
             //TODO: paramaterize & cache
             LambdaExpression l = Expression.Lambda(
                 Expression.Call(
                     null,
                     meinf,
                     Expression.Constant(toSave),
-                    Expression.New(contr, Expression.Convert(Expression.Constant(p.o), p.t)),
+                    Expression.New(contr, Expression.Convert(Expression.Constant(p.o), p.t), Expression.Constant(graphClientFactory)),
                     Expression.Constant(relationshipName),
                     Expression.Constant(parms),
                     Expression.Constant(forceNodeName1),
-                    Expression.Constant(forceNodeName2)
+                    Expression.Constant(forceNodeName2), 
+                    Expression.Constant(graphClientFactory)
                 )
             );
             return ((ICypherFluentQuery query, Dictionary<string, (string, bool)> ids))l.Compile().DynamicInvoke();
         }
 
 
-        private static (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) SaveNodeInline<T>(ReflectReadDictionary<T> toSave, (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName = null) where T : INeo4jNode
+        private static (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) SaveNodeInline<T>(LiveDbObject<T> toSave, (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName, Func<ITransactionalGraphClient> graphClientFactory) where T : INeo4jNode
         {
             string id = toSave.Get(x => x.Id);
             if (string.IsNullOrWhiteSpace(id))
@@ -159,13 +164,13 @@ namespace Neo4jIntegration.DB
 
             parms.query = parms.query.Set($"_{nodeName}.__type__ = {Neo4jEncode(typeof(T).FullName)}");
 
-            IEnumerable<Property> props = toSave.propCache.props.Select(x => x.Value)
+            IEnumerable<Property> props = LiveDbObject<T>.PropCache.props.Select(x => x.Value)
                 .Where(x => !x.neo4JAttributes.Where(y => y is DbIgnoreAttribute).Any())
                 .OrderBy(x => typeof(INeo4jNode).IsAssignableFrom(x.info.PropertyType) ? 0 : 1)
                 .ToList();
             foreach (Property v in props)
             {
-                object o = v.PullValue(toSave.backingInstance);
+                object o = v.PullValue(toSave.BackingInstance);
                 System.Type t = v.info.PropertyType;
 
 
@@ -186,31 +191,31 @@ namespace Neo4jIntegration.DB
                     ?? v.info.Name;
                 if (typeof(INeo4jNode).IsAssignableFrom(t))
                 {
-                    parms = _SaveNodeRelationship(toSave, (o, t), relationshipName, parms, nodeName, $"{nodeName}_{relationshipName}");
+                    parms = _SaveNodeRelationship(toSave, (o, t), relationshipName, parms, nodeName, $"{nodeName}_{relationshipName}", graphClientFactory);
                 }
                 else if (enuT != null)
                 {
-                    parms = _SaveEnumerableNodeRelationship(toSave, (o, enuT), relationshipName, parms, nodeName, $"{nodeName}_{relationshipName}");
+                    parms = _SaveEnumerableNodeRelationship(toSave, (o, enuT), relationshipName, parms, nodeName, $"{nodeName}_{relationshipName}", graphClientFactory);
                 }
                 else
                 {
-                    parms = SaveValueInline(toSave, v, parms, nodeName);
+                    parms = SaveValueInline(toSave, v, parms, nodeName, graphClientFactory);
                 }
             }
 
             return parms;
         }
-        private static (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) SaveValueInline<T>(ReflectReadDictionary<T> toSave, Property value, (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName = null) where T : INeo4jNode
+        private static (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) SaveValueInline<T>(LiveDbObject<T> toSave, Property value, (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName, Func<ITransactionalGraphClient> graphClientFactory) where T : INeo4jNode
         {
             System.Type t = value.info.PropertyType;
-            object o = value.PullValue(toSave.backingInstance);
+            object o = value.PullValue(toSave.BackingInstance);
 
             string nodeName = forceNodeName ?? toSave.Get(x => x.Id);
-            parms.query = parms.query.Set($"_{nodeName}.{value.Name} = {Neo4jEncode(o, t)}");
+            parms.query = parms.query.Set($"_{nodeName}.{value.infoName} = {Neo4jEncode(o, t)}");
 
             return parms;
         }
-        private static (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) SaveNodeRelationship<T, U>(ReflectReadDictionary<T> toSave, ReflectReadDictionary<U> toSaveB, string relationshipName, (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2) where T : INeo4jNode where U : INeo4jNode
+        private static (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) SaveNodeRelationship<T, U>(LiveDbObject<T> toSave, LiveDbObject<U> toSaveB, string relationshipName, (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2, Func<ITransactionalGraphClient> graphClientFactory) where T : INeo4jNode where U : INeo4jNode
         {
 
             string id1 = toSave.Get(x => x.Id);
@@ -253,18 +258,18 @@ namespace Neo4jIntegration.DB
                 parms.ids.Add(id2, (forceNodeName2, false));
             }
 
-            parms = SaveNodeInline(toSave, parms, forceNodeName1);
+            parms = SaveNodeInline(toSave, parms, forceNodeName1, graphClientFactory);
             parms.query = parms.query.Merge($"(_{parms.ids[id1].Item1})-[:{relationshipName}]->(_{parms.ids[id2].Item1}{(parms.ids[id2].Item2? "": $":{typeof(U).QuerySaveLabels()}")})");
-            parms = SaveNodeInline(toSaveB, parms, forceNodeName2);
+            parms = SaveNodeInline(toSaveB, parms, forceNodeName2, graphClientFactory);
 
             return parms;
         }
-        private static (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) SaveEnumerableNodeRelationship<T, U>(ReflectReadDictionary<T> toSave, IEnumerable<ReflectReadDictionary<U>> toSaveB, string relationshipName, (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2) where T : INeo4jNode where U : INeo4jNode
+        private static (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) SaveEnumerableNodeRelationship<T, U>(LiveDbObject<T> toSave, IEnumerable<LiveDbObject<U>> toSaveB, string relationshipName, (Neo4jClient.Cypher.ICypherFluentQuery query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2, Func<ITransactionalGraphClient> graphClientFactory) where T : INeo4jNode where U : INeo4jNode
         {
             int i = 0;
             foreach (var v in toSaveB)
             {
-                parms = SaveNodeRelationship(toSave, v, relationshipName, parms, forceNodeName1, $"{forceNodeName2}_{i}");
+                parms = SaveNodeRelationship(toSave, v, relationshipName, parms, forceNodeName1, $"{forceNodeName2}_{i}", graphClientFactory);
                 i++;
             }
             return parms;

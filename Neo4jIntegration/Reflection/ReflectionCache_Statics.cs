@@ -167,7 +167,7 @@ namespace Neo4jIntegration.Reflection
                 }
                 else
                 {
-                    ReflectionCache.Type td = new ReflectionCache.Type(t, false);
+                    ReflectionCache.Type td = new ReflectionCache.Type(t);
                     TypeDataCache.Add(t, td);
                     return td;
                 }

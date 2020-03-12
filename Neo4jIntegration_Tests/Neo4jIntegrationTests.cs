@@ -4,6 +4,7 @@ using Neo4jClient;
 using Neo4jClient.Cypher;
 using Neo4jClient.Transactions;
 using Neo4jIntegration;
+using Neo4jIntegration.DB;
 using Neo4jIntegration.Models;
 using Neo4jIntegration.Models.Versioning;
 using Neo4jIntegration.Reflection;
@@ -188,8 +189,12 @@ namespace plm_testing
                 }
             };
 
-            var client = /*(ITransactionalGraphClient)*/new GraphClient(new Uri("http://localhost:7474/db/data"), "neo4j", "password");
-            client.Connect();
+            Func<ITransactionalGraphClient> client = () =>
+            {
+                var c = new GraphClient(new Uri("http://localhost:7474/db/data"), "neo4j", "password");
+                c.Connect();
+                return c;
+            };
 
             s.Save(client);
 
@@ -217,8 +222,8 @@ namespace plm_testing
                 
                 //.Where(x => x.Id == (new Guid(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)).ToString("n"));
                 ;
-            //TODO: ReadValidate
-            ReflectReadDictionary<Style>[] sOut = a.Results.ToArray();
+
+            LiveDbObject<Style>[] sOut = a.Results.ToArray();
         }
     }
 }

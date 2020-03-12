@@ -27,14 +27,14 @@ namespace Neo4jIntegration
     {
         public static readonly string setName = typeof(T).QuerySaveName();
 
-        public static ReflectReadDictionary<T> SingleValue(string id, ITransactionalGraphClient client)
+        public static LiveDbObject<T> SingleValue(string id, Func<ITransactionalGraphClient> client)
             => Single(id, client).Results.FirstOrDefault();
-        public static IEnumerable<ReflectReadDictionary<T>> AllValue(ITransactionalGraphClient client)
+        public static IEnumerable<LiveDbObject<T>> AllValue(Func<ITransactionalGraphClient> client)
             => All(client).Results;
 
-        public static TypeWrappedCypherFluentQuery<T, T> Single(string id, ITransactionalGraphClient client)
+        public static TypeWrappedCypherFluentQuery<T, T> Single(string id, Func<ITransactionalGraphClient> client)
             => All(client).Where(x => (x as INeo4jNode).Id == id);
-        public static TypeWrappedCypherFluentQuery<T, T> All(ITransactionalGraphClient client)
+        public static TypeWrappedCypherFluentQuery<T, T> All(Func<ITransactionalGraphClient> client)
         {
             return TypeWrappedCypherFluentQuery<T, T>.Build<T>(client);
         }
@@ -49,18 +49,18 @@ namespace Neo4jIntegration
         public ICypherFluentQuery internalQ { get; set; }
         private TypeWrappedCypherFluentQuery<T, T> rQ { get; set; }
         public List<PropertyInfo> pulledChildNodes { get; set; } = new List<PropertyInfo>();
-        public ITransactionalGraphClient client { get; }
+        public Func<ITransactionalGraphClient> clientFactory { get; }
         //public List<ReadQueryParams<T>> readQueryParams { get; internal set; } = new List<ReadQueryParams<T>>();
         public List<string> pulledPaths { get; set; } = new List<string>();
 
         public string quearyName { get; } = "Rootobj";
         //public Expression<Func<IEnumerable<T>, IEnumerable<S>>> quearyExpression { get; internal set; }
 
-        public IEnumerable<ReflectReadDictionary<T>> Results => this.Return();
+        public IEnumerable<LiveDbObject<T>> Results => this.Return();
 
         public int PathCount { get; set; } = 0;
 
-        public static TypeWrappedCypherFluentQuery<U, U> Build<U>(ITransactionalGraphClient client) //where U : class, INeo4jNode, new()
+        public static TypeWrappedCypherFluentQuery<U, U> Build<U>(Func<ITransactionalGraphClient> client) //where U : class, INeo4jNode, new()
         {
             TypeWrappedCypherFluentQuery<U, U> ths = new TypeWrappedCypherFluentQuery<U, U>(client);
             ths.rQ = ths;
@@ -69,7 +69,7 @@ namespace Neo4jIntegration
         }
         private TypeWrappedCypherFluentQuery<T, U> SubBuild<U>(string path) //where U : class, INeo4jNode, new()
         {
-            return new TypeWrappedCypherFluentQuery<T, U>(internalQ, client, path)
+            return new TypeWrappedCypherFluentQuery<T, U>(internalQ, clientFactory, path)
             {
                 PathCount = PathCount,
                 pulledChildNodes = pulledChildNodes,
@@ -79,20 +79,20 @@ namespace Neo4jIntegration
                 rQ = rQ
             };
         }
-        private TypeWrappedCypherFluentQuery(ICypherFluentQuery internalQuery, ITransactionalGraphClient client, string path)
+        private TypeWrappedCypherFluentQuery(ICypherFluentQuery internalQuery, Func<ITransactionalGraphClient> client, string path)
         {
             internalQ = internalQuery;
-            this.client = client;
+            this.clientFactory = client;
             this.quearyName = path;
         }
-        private TypeWrappedCypherFluentQuery(ITransactionalGraphClient client)
+        private TypeWrappedCypherFluentQuery(Func<ITransactionalGraphClient> client)
         {
-            internalQ = client.Cypher.Match($"p0 = ({quearyName}:{labels})");
+            internalQ = client().Cypher.Match($"p0 = ({quearyName}:{labels})");
             PathCount++;
-            this.client = client;
+            this.clientFactory = client;
         }
 
-        private IEnumerable<ReflectReadDictionary<T>> Return()
+        private IEnumerable<LiveDbObject<T>> Return()
         {
             StringBuilder sb = new StringBuilder();
 
@@ -124,7 +124,7 @@ namespace Neo4jIntegration
                         ReflectionCache.BuildType(parentTypeStr.ToString(), typeof(INeo4jNode)) :
                         ReflectionCache.BuildType(JsonConvert.DeserializeObject<string[]>(x[2]), typeof(INeo4jNode));
                     object parentInstance = ManualDeserializeNode(
-                        parentJobj.ToDictionary(x => x.Key.ToLowerInvariant(), x => x.Value),
+                        parentJobj.ToDictionary(x => x.Key, x => x.Value),
                         parentType,
                         nodeHeap
                     );
@@ -134,7 +134,7 @@ namespace Neo4jIntegration
                             ReflectionCache.BuildType(childTypeStr.ToString(), typeof(INeo4jNode)) :
                             ReflectionCache.BuildType(JsonConvert.DeserializeObject<string[]>(x[3]), typeof(INeo4jNode));
                     object childInstance = ManualDeserializeNode(
-                        childJobj.ToDictionary(x => x.Key.ToLowerInvariant(), x => x.Value),
+                        childJobj.ToDictionary(x => x.Key, x => x.Value),
                         childType,
                         nodeHeap
                     );
@@ -150,14 +150,14 @@ namespace Neo4jIntegration
             var withProps = raw.Select(x => (x.parentInstance, x.childInstance,
                 ReflectionCache.GetTypeData(x.parentInstance).props
                     .Where(y =>
-                        y.Key == x.relationship.ToLowerInvariant()
+                        y.Key == x.relationship
                         ||
                         (
                             y.Value.neo4JAttributes.Where(x => x is DbNameAttribute).Any()
                             &&
-                            y.Value.neo4JAttributes.Select(x => x as DbNameAttribute).Where(x => x != null).FirstOrDefault()?.Name?.ToLowerInvariant()
+                            y.Value.neo4JAttributes.Select(x => x as DbNameAttribute).Where(x => x != null).FirstOrDefault()?.Name
                             ==
-                            x.relationship.ToLowerInvariant()
+                            x.relationship
                         )
                      )
                     .SingleOrDefault()
@@ -175,7 +175,7 @@ namespace Neo4jIntegration
                 .Distinct()//TODO: dedupe on ID, rather than pointer
                 .Where(x => x != null && x is T)
                 .Cast<T>()
-                .Select(x => new ReflectReadDictionary<T>(x))
+                .Select(x => new LiveDbObject<T>(x, clientFactory))
                 .ToArray();
 
             return ret;
@@ -261,7 +261,7 @@ namespace Neo4jIntegration
             {
                 MemberExpression mExp = bdy as MemberExpression;
                 PropertyInfo propInfo = mExp.Member as PropertyInfo;
-                ReflectionCache.Property prop = new ReflectionCache.Property(propInfo, false);
+                ReflectionCache.Property prop = new ReflectionCache.Property(propInfo);
 
                 fullPath.Add((mExp.ToString().Replace('.', '_'), prop, mExp));
 

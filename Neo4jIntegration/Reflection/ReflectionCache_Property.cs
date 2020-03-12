@@ -13,58 +13,45 @@ namespace Neo4jIntegration.Reflection
 {
     public partial class ReflectionCache
     {
-        public class Property
+        public readonly struct Property
         {
-            public static object[] fastEmpty = new object[0];
-            public bool isID;
+            public static readonly object[] fastEmpty = new object[0];
+            public readonly bool isID;
             public readonly PropertyInfo info;
             public readonly INeo4jAttribute[] neo4JAttributes;
+            public readonly string infoName;
+            public readonly bool isCollection;
+            public readonly string jsonName;
 
-            public static Property Dummy(bool WrittenTo = false)
-            {
-                Property ret = new Property(null);
-                ret.WrittenTo = WrittenTo;
-                return ret;
-            }
-
-            public bool WrittenTo { get; internal set; }
-
-            public string Name => info.Name;
-            
-            public bool IsCollection => typeof(IEnumerable).IsAssignableFrom(info.PropertyType) && info.PropertyType != typeof(string);
-
-            public string JsonName => neo4JAttributes
-                .Select(x => x as DbNameAttribute)
-                .Where(x => x != null)
-                .FirstOrDefault()
-                ?.Name
-                ?.ToLowerInvariant() 
-                ?? 
-                Name.ToLowerInvariant();
-
-            public Property(PropertyInfo buildFrom, bool noCheck)
+            public Property(PropertyInfo buildFrom)
             {
                 info = buildFrom;
+
                 neo4JAttributes = buildFrom.GetCustomAttributes(true)
                     .Where(x => x is INeo4jAttribute)
                     .Cast<INeo4jAttribute>()
                     .ToArray();
-                WrittenTo = false;
-                //try
-                //{
-                //    customDBSchema = neo4JAttributes.Where(a => typeof(ICustomDBSchema).IsAssignableFrom(a.GetType())).SingleOrDefault() as ICustomDBSchema;
-                //    if (customDBSchema == null)
-                //    {
-                //        customDBSchema = new StoreDirectAttribute();
-                //    }
-                //}
-                //catch
-                //{
-                //    if (!noCheck)
-                //    {
-                //        throw new ArgumentException("A column in the database may only declare one ICustomDBSchema");
-                //    }
-                //}
+
+                isID = neo4JAttributes.Where(a => a is IDAttribute).Any();
+                
+                isCollection = typeof(IEnumerable).IsAssignableFrom(info.PropertyType) && info.PropertyType != typeof(string);
+
+                infoName = info.Name;
+
+                try
+                {
+                    jsonName = neo4JAttributes
+                        .Select(x => x as DbNameAttribute)
+                        .Where(x => x != null)
+                        .SingleOrDefault()
+                        ?.Name
+                        ??
+                        infoName;
+                }
+                catch
+                {
+                    throw new FormatException($"Property {info.DeclaringType.Name}.{info.Name} declares multiple DbNameAttributes! Properties may only declare one DbNameAttribute (note: IdAttribute also counts as a DbNameAttribute)");
+                }
             }
 
             public object PullValue<T>(T instance)
@@ -75,20 +62,6 @@ namespace Neo4jIntegration.Reflection
             public void PushValue<T>(T backingInstance, object value)
             {
                 info.SetValue(backingInstance, value);
-                WrittenTo = true;
-            }
-
-            private Property(Property buildFrom)
-            {
-                if (buildFrom == null) return;
-
-                info = buildFrom.info;
-                neo4JAttributes = buildFrom.neo4JAttributes; //clone
-                WrittenTo = false;
-            }
-            public Property DeepClone()
-            {
-                return new Property(this);
             }
         }
     }
