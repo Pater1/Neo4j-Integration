@@ -37,7 +37,7 @@ namespace Neo4jIntegration.Reflection
                 propsInfoFirst = props.ToDictionary(x => x.Value.info, x => x.Value);
                 try
                 {
-                    ID = props.Where(x => x.Value.neo4JAttributes.Where(a => a is ID).Any()).Single().Value;
+                    ID = props.Where(x => x.Value.neo4JAttributes.Where(a => a is IDAttribute).Any()).Single().Value;
                     ID.isID = true;
                 }
                 catch

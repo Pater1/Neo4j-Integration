@@ -20,22 +20,9 @@ namespace Neo4jIntegration.Reflection
 {
     public static class ReflectReadDictionary
     {
-        public static readonly CultureInfo cultureInfo = System.Threading.Thread.CurrentThread.CurrentCulture;
-        public static readonly TextInfo textInfo = cultureInfo.TextInfo;
         public static bool Save<T>(this ReflectReadDictionary<T> buildFor, ITransactionalGraphClient client) where T : class, INeo4jNode, new()
         {
-            //DependencyInjector depInj = DependencyInjector.Custom().Insert("GraphClient", client).Insert("ReflectRead", buildFor);
-            //SaveQuearyParams<T> r = new SaveQuearyParams<T>()
-            //{
-            //    buildFor = buildFor,
-            //    queary = client.Cypher,
-            //    depInj = depInj,
-            //    recursionDepth = 0
-            //};
-            //r = r.Save();
-            //return r.success;
-
-            DBOps<T>.SaveNode(buildFor, client);
+            DBOps.SaveNode(buildFor, client);
             return true;
         }
         

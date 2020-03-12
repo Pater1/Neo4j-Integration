@@ -16,7 +16,7 @@ using System.Linq.Expressions;
 
 namespace Neo4jIntegration.DB
 {
-    public static class DBOps<A>//<T> //where T: class, INeo4jNode, new()
+    public static class DBOps
     {
         public static void SaveNode<T>(ReflectReadDictionary<T> toSave, ITransactionalGraphClient client) where T : INeo4jNode
         {
@@ -35,8 +35,8 @@ namespace Neo4jIntegration.DB
                 return parms;
             }
 
-            MethodInfo meinf = typeof(DBOps<A>)
-                .GetMethod(nameof(DBOps<A>._SaveEnumerableNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
+            MethodInfo meinf = typeof(DBOps)
+                .GetMethod(nameof(DBOps._SaveEnumerableNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
                 .MakeGenericMethod(p1.t);
             ConstructorInfo contr = typeof(ReflectReadDictionary<>).MakeGenericType(p1.t).GetConstructors().Where(x => x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == p1.t).Single();
             //TODO: paramaterize & cache
@@ -62,8 +62,8 @@ namespace Neo4jIntegration.DB
                 return parms;
             }
 
-            MethodInfo meinf = typeof(DBOps<A>)
-                .GetMethod(nameof(DBOps<A>.SaveEnumerableNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
+            MethodInfo meinf = typeof(DBOps)
+                .GetMethod(nameof(DBOps.SaveEnumerableNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
                 .MakeGenericMethod(typeof(T), p.t);
             System.Type rrdt = typeof(ReflectReadDictionary<>).MakeGenericType(p.t);
             ConstructorInfo contr = rrdt.GetConstructors().Where(x => x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == p.t).Single();
@@ -107,8 +107,8 @@ namespace Neo4jIntegration.DB
                 return parms;
             }
 
-            MethodInfo meinf = typeof(DBOps<A>)
-                .GetMethod(nameof(DBOps<A>.SaveNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
+            MethodInfo meinf = typeof(DBOps)
+                .GetMethod(nameof(DBOps.SaveNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
                 .MakeGenericMethod(typeof(T), p.t);
             ConstructorInfo contr = typeof(ReflectReadDictionary<>).MakeGenericType(p.t).GetConstructors().Where(x => x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == p.t).Single();
             //TODO: paramaterize & cache
@@ -160,7 +160,7 @@ namespace Neo4jIntegration.DB
             parms.query = parms.query.Set($"_{nodeName}.__type__ = {Neo4jEncode(typeof(T).FullName)}");
 
             IEnumerable<Property> props = toSave.propCache.props.Select(x => x.Value)
-                .Where(x => !x.neo4JAttributes.Where(y => y is DBIgnoreAttribute).Any())
+                .Where(x => !x.neo4JAttributes.Where(y => y is DbIgnoreAttribute).Any())
                 .OrderBy(x => typeof(INeo4jNode).IsAssignableFrom(x.info.PropertyType) ? 0 : 1)
                 .ToList();
             foreach (Property v in props)

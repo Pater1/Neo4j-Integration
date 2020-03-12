@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Neo4jIntegration.Attributes
 {
-    public class Unique : Attribute, INeo4jAttribute
+    public class UniqueAttribute : Attribute, INeo4jAttribute
     {
     }
 }

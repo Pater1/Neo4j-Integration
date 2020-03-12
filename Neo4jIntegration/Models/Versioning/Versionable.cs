@@ -11,7 +11,7 @@ namespace Neo4jIntegration.Models.Versioning
 {
     public class Versionable<T> : INeo4jNode, IEnumerable<VersionableItteration<T>>, IEnumerable<T>
     {
-        [ID(ID.IDType.String, ID.CollisionResolutionStrategy.Rand_Base62_10)]
+        [ID(IDAttribute.CollisionResolutionStrategy.Rand_Base64_10)]
         public string Id { get; set; }
         public bool IsActive { get; set; } = true;
 

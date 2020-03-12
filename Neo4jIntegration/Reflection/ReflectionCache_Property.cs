@@ -31,7 +31,7 @@ namespace Neo4jIntegration.Reflection
 
             public string Name => info.Name;
             
-            public bool IsCollection => typeof(IEnumerable).IsAssignableFrom(info.PropertyType) && !typeof(NoDBCollection).IsAssignableFrom(info.PropertyType) && info.PropertyType != typeof(string);
+            public bool IsCollection => typeof(IEnumerable).IsAssignableFrom(info.PropertyType) && info.PropertyType != typeof(string);
 
             public string JsonName => neo4JAttributes
                 .Select(x => x as DbNameAttribute)

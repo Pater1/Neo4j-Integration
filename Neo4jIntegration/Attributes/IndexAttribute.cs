@@ -6,10 +6,10 @@ using System.Text;
 
 namespace Neo4jIntegration.Attributes
 {
-    public class Index : Attribute, INeo4jAttribute
+    public class IndexAttribute : Attribute, INeo4jAttribute
     {
         string indexName;
-        public Index(string indexName)
+        public IndexAttribute(string indexName)
         {
             this.indexName = indexName;
         }

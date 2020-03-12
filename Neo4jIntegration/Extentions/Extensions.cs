@@ -1,5 +1,4 @@
 ﻿using Neo4jIntegration.Models;
-using Neo4jIntegration.Models.Metadata;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -10,12 +9,11 @@ namespace Neo4jIntegration
 {
     public static class Extensions
     {
-        private static readonly Type noEnum = typeof(NoDBCollection);
         private static readonly Type enumerable = typeof(IEnumerable);
         private static readonly Type strng = typeof(string);
         public static bool IsEnumerable(this Type t)
         {
-            return enumerable.IsAssignableFrom(t) && t != strng && !noEnum.IsAssignableFrom(t);
+            return enumerable.IsAssignableFrom(t) && t != strng;
         }
 
         private static Dictionary<Type, string> labelsCache = new Dictionary<Type, string>();
@@ -57,11 +55,7 @@ namespace Neo4jIntegration
         {
             return t.QuerySaveLabels().Replace(":", "__");
         }
-        //public static string QuerySaveLabel(this Type t)
-        //{
-        //    return t.QuerySaveLabels().Split(':')[0];
-        //}
-
+        
         public static bool TryMakeGenericType(this Type a, out Type gen, params Type[] args)
         {
             try
