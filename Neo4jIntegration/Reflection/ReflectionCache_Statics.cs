@@ -96,6 +96,13 @@ namespace Neo4jIntegration.Reflection
         }
         public static System.Type BuildType(string str, System.Type assignableFilter = null)
         {
+            System.Type fastRet = AppDomain.CurrentDomain.GetAssemblies().Select(x => x.GetType(str)).Where(x => x != null).SingleOrDefault();
+
+            if(fastRet != null)
+            {
+                return fastRet;
+            }
+
             lock (typeCache)
             {
                 if (!typeCache.ContainsKey(str) || !typeCache[str].Any())

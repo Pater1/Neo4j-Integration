@@ -24,16 +24,19 @@ namespace Neo4jIntegration.Reflection
         public static readonly TextInfo textInfo = cultureInfo.TextInfo;
         public static bool Save<T>(this ReflectReadDictionary<T> buildFor, ITransactionalGraphClient client) where T : class, INeo4jNode, new()
         {
-            DependencyInjector depInj = DependencyInjector.Custom().Insert("GraphClient", client).Insert("ReflectRead", buildFor);
-            SaveQuearyParams<T> r = new SaveQuearyParams<T>()
-            {
-                buildFor = buildFor,
-                queary = client.Cypher,
-                depInj = depInj,
-                recursionDepth = 0
-            };
-            r = r.Save();
-            return r.success;
+            //DependencyInjector depInj = DependencyInjector.Custom().Insert("GraphClient", client).Insert("ReflectRead", buildFor);
+            //SaveQuearyParams<T> r = new SaveQuearyParams<T>()
+            //{
+            //    buildFor = buildFor,
+            //    queary = client.Cypher,
+            //    depInj = depInj,
+            //    recursionDepth = 0
+            //};
+            //r = r.Save();
+            //return r.success;
+
+            DBOps<T>.SaveNode(buildFor, client);
+            return true;
         }
         
         public static ReflectReadDictionary<T> Save<T>(this T buildFor, ITransactionalGraphClient graphClient) where T : class, INeo4jNode, new()
@@ -58,131 +61,10 @@ namespace Neo4jIntegration.Reflection
         private static ReflectionCache.Type s_PropCache
              = ((Func<ReflectionCache.Type>)(() => new ReflectionCache.Type(typeof(T), false)))();
 
-        private ReflectReadDictionary<U> CollapseMappingObject<U>()// where U : class, new()
-        {
-            IEnumerable<(string mappedProp, string thisObj, IEnumerable<string> childPath, ReflectionCache.Property Value)> singleLayer = propCache.props.Select(x => (x.Key, x.Key.Split("_")[0], x.Key.Split("_").Skip(1), x.Value));
-            U rootInst = (U)this[singleLayer.Select(x => x.thisObj).Distinct().Single()];
-            return CollapseMappingObject(this, rootInst, singleLayer.Where(x => x.childPath.Count() > 0).Select(x => (x.mappedProp, x.childPath.First(), x.childPath.Skip(1), x.Value)));
-        }
-        private static ReflectReadDictionary<U> CollapseMappingObject<U,V>(ReflectReadDictionary<V> map, U bi, IEnumerable<(string mappedProp, string directChild, IEnumerable<string> childPath, ReflectionCache.Property Value)> singleLayer) //where U : class, new() where V : class, new()
-        {
-            ReflectReadDictionary<U> ret = new ReflectReadDictionary<U>(bi);
-            foreach(
-                (string mappedProp, string directChild) 
-                    in 
-                singleLayer
-                    .Where(x => x.childPath.Count() == 0)
-                    .Select(x => (x.mappedProp, x.directChild)).Distinct()
-            ){
-                object chl = map[mappedProp];
-
-                if (chl != null)
-                {
-                    if (chl.GetType().IsEnumerable())
-                    {
-                        chl = ChainFillCollection(map, (IEnumerable)chl, directChild, singleLayer);
-                    }
-                    else
-                    {
-                        chl = ChainFillObject(map, chl, directChild, singleLayer);
-                    }
-                }
-
-                map[mappedProp] = chl;
-                ret[directChild] = chl;
-            }
-            return ret;
-        }
-        private static object ChainFillCollection<V>(ReflectReadDictionary<V> map, IEnumerable chl, string directChild, IEnumerable<(string mappedProp, string directChild, IEnumerable<string> childPath, ReflectionCache.Property Value)> singleLayer)
-        {
-            Type t = chl.GetType().GetGenericArguments()[0];
-            Type refColT = typeof(ReferenceCollection<>).MakeGenericType(t);
-            ConstructorInfo refColCotr = refColT.GetConstructors().Where(x => x.GetParameters().Length == 0).Single();
-
-            Delegate newRefCol = Expression.Lambda(
-                Expression.New(refColCotr),
-                new ParameterExpression[0]
-            ).Compile();
-
-            object refCol = newRefCol.DynamicInvoke();
-
-            ParameterExpression refColParam = Expression.Parameter(refColT, "refCol");
-            ParameterExpression refColObj = Expression.Parameter(t, "obj");
-
-            MethodInfo add = refColT.GetMethods().Where(x => x.GetParameters().Length == 1 && x.Name.Contains("Add")).First();
-            Delegate doAdd = Expression.Lambda(
-                Expression.Call(
-                    refColParam,
-                    add,
-                    refColObj
-                ),
-                refColParam,
-                refColObj
-            ).Compile();
-
-            foreach(object o in chl)
-            {
-                object oj = o;
-                if(oj is IObjectBacked)
-                {
-                    oj = (oj as IObjectBacked).backingObject;
-                }
-                object obj = ChainFillObject(map, oj, directChild, singleLayer);
-                doAdd.DynamicInvoke(refCol, obj);
-            }
-
-            MethodInfo dedup = refColT.GetMethods().Where(x => x.GetParameters().Length == 0 && x.Name.Contains("DeDup")).First();
-            Delegate doDedup = Expression.Lambda(
-                Expression.Call(
-                    refColParam,
-                    dedup
-                ),
-                refColParam
-            ).Compile();
-            doDedup.DynamicInvoke(refCol);
-
-            return refCol;
-        }
-        private static object ChainFillObject<V>(ReflectReadDictionary<V> map, object chl, string directChild, IEnumerable<(string mappedProp, string directChild, IEnumerable<string> childPath, ReflectionCache.Property Value)> singleLayer) { 
-            //TODO if chl is collection, add all chl to ReferenceCollection
-            Type tmap = typeof(V);
-            Type rrtmap = typeof(ReflectReadDictionary<V>);
-
-            Type tchl = chl.GetType();
-            Type rrchl = typeof(ReflectReadDictionary<>).MakeGenericType(tchl);
-            MethodInfo mthchl = rrchl
-                .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
-                .Single(x => x.Name == nameof(map.CollapseMappingObject) && x.GetParameters().Length == 3)
-                .MakeGenericMethod(tchl, tmap);
-            ConstructorInfo cotr = rrchl.GetConstructor(new Type[] { tchl, typeof(bool) });
-
-            ParameterExpression rrtmapara = Expression.Parameter(rrtmap, "rrtmap");
-            ParameterExpression child = Expression.Parameter(tchl, "child");
-            ParameterExpression layer = Expression.Parameter(singleLayer.GetType(), "layer");
-            LambdaExpression lmbd = Expression.Lambda(
-                Expression.Call(
-                    null,
-                    mthchl,
-                    rrtmapara,
-                    child,
-                    layer
-                ),
-                rrtmapara,
-                child,
-                layer
-            );
-            Delegate comp = lmbd.Compile();
-
-            var subLayer = singleLayer.Where(x => x.childPath.Count() > 0 && x.directChild == directChild).Select(x => (x.mappedProp, x.childPath.First(), x.childPath.Skip(1), x.Value));
-            IObjectBacked chlrr = (IObjectBacked)comp.DynamicInvoke(map, chl, subLayer);
-            return chlrr.backingObject;
-        }
-
         public object backingObject { get => backingInstance; }
         public readonly T backingInstance;
         public ReflectionCache.Type propCache;
         public ReflectionCache.Property IDProp => propCache.ID;
-        public string StrID => IDProp.WriteValidate(DependencyInjector.Custom(), backingInstance).ToString();
         public ReflectReadDictionary(T backingInstance)
         {
             this.backingInstance = backingInstance;
@@ -218,12 +100,6 @@ namespace Neo4jIntegration.Reflection
             return ret;
         }
 
-        public string PullValidObjectID(DependencyInjector dependencyInjector)
-        {
-            return propCache.ID.WriteValidate(dependencyInjector, backingInstance).ToString();
-        }
-
-
         internal ReflectReadDictionary<T> SetChainable<TValue>(Expression<Func<T, TValue>> expression, TValue value)
         {
             Set(expression, value);
@@ -233,9 +109,9 @@ namespace Neo4jIntegration.Reflection
         {
             var member = (expression.Body as MemberExpression).Member as PropertyInfo;
 
-            var rt = propCache.propsInfoFirst[member];
+            var rt = propCache.props[member.Name.ToLowerInvariant()];
             rt.WrittenTo = true;
-            propCache.propsInfoFirst[member] = rt;
+            propCache.props[member.Name] = rt;
 
             member.SetValue(backingInstance, value);
         }
@@ -258,14 +134,6 @@ namespace Neo4jIntegration.Reflection
             {
                 propCache.props[key.ToLower()].PushValue(backingInstance, value);
             }
-        }
-        public void WriteValidate(DependencyInjector depInj)
-        {
-            T bi = backingInstance;
-            Parallel.ForEach(propCache.props, x =>
-            {
-                x.Value.WriteValidate(depInj.Clone(), bi);
-            });
         }
 
         public int Count => propCache.props.Count();

@@ -13,12 +13,12 @@ namespace Neo4jIntegration_Tests.TestModels
         public string Id { get; set; }
         public bool IsActive { get; set; } = true;
 
-        [ReferenceThroughRelationship("HEX")]
+        [DbName("HEX")]
         public Versionable<string> Hex { get; private set; } = new Versionable<string>();
-        [ReferenceThroughRelationship("NAME")]
+        [DbName("NAME")]
         public Versionable<string> Name { get; private set; } = new Versionable<string>();
 
-        [ReferenceThroughRelationship("TEMPLATE")]
+        [DbName("TEMPLATE")]
         public Versionable<Color> Template { get; private set; } = new Versionable<Color>();
     }
 }

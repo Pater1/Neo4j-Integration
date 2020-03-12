@@ -13,23 +13,22 @@ namespace Neo4jIntegration_Tests.TestModels
         public string Id { get; set; }
         public bool IsActive { get; set; } = true;
 
-        [EscapeString]
         public string Name { get; set; }
 
 
-        [ReferenceThroughRelationship("TEMPLATE")]
+        [DbName("TEMPLATE")]
         public Style Template { get; set; }
 
-        [ReferenceThroughRelationship("TEMPLATE_Versions")]
+        [DbName("TEMPLATE_Versions")]
         public Versionable<Style> TemplateVers { get; set; }
 
-        [ReferenceThroughRelationship("WAISTLINE_VERISONS")]
+        [DbName("WAISTLINE_VERISONS")]
         public Versionable<ICollection<float>> WaistLine { get; private set; } = new Versionable<ICollection<float>>();
 
-        [ReferenceThroughRelationship("COLORS_VERSIONS")]
-        public Versionable<ReferenceCollection<Color>> Colors { get; private set; } = new Versionable<ReferenceCollection<Color>>();
+        [DbName("COLORS_VERSIONS")]
+        public Versionable<ICollection<Color>> Colors { get; private set; } = new Versionable<ICollection<Color>>();
 
-        [ReferenceThroughRelationship("CATEGORY_VERSIONS")]
+        [DbName("CATEGORY_VERSIONS")]
         public Versionable<Category> Category { get; private set; } = new Versionable<Category>();
 
 

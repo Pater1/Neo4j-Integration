@@ -8,7 +8,7 @@ namespace Neo4jIntegration.Models
     public interface INeo4jNode
     {
         [ID(ID.IDType.String, ID.CollisionResolutionStrategy.ErrorOut)]
-        public string Id { get; }
-        bool IsActive { get; }
+        public string Id { get; set; }
+        bool IsActive { get; set; }
     }
 }

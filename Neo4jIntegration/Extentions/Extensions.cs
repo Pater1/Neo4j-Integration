@@ -13,7 +13,7 @@ namespace Neo4jIntegration
         private static readonly Type noEnum = typeof(NoDBCollection);
         private static readonly Type enumerable = typeof(IEnumerable);
         private static readonly Type strng = typeof(string);
-        public static bool IsEnumerable (this Type t)
+        public static bool IsEnumerable(this Type t)
         {
             return enumerable.IsAssignableFrom(t) && t != strng && !noEnum.IsAssignableFrom(t);
         }
@@ -28,20 +28,19 @@ namespace Neo4jIntegration
             }
             else
             {
-                if (!t.IsInterface && !typeof(NoDBLabel).IsAssignableFrom(t))
-                {
-                    ret = t.Name;
-                }
                 if (t.IsGenericType)
                 {
-                    if (!string.IsNullOrEmpty(ret)) {
-                        ret = ret.Split('`')[0];
-                    }
-                    ret = t.GetGenericArguments().Select(x => QuerySaveLabels(x)).Prepend(ret).Aggregate((a, b) => {
+                    ret = t.Name.Split('`')[0];
+                    ret = t.GetGenericArguments().Select(x => QuerySaveLabels(x)).Prepend(ret).Aggregate((a, b) =>
+                    {
                         string delimiter =
                             string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b) ? "" : ":";
                         return $"{a}{delimiter}{b}";
                     });
+                }
+                else
+                {
+                    ret = t.Name;
                 }
 
                 lock (labelsCache)

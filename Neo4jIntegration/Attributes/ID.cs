@@ -7,11 +7,12 @@ using System.Text;
 
 namespace Neo4jIntegration.Attributes
 {
-    public class ID : Attribute, INeo4jAttribute, IOnWriteAttribute, IOnReadAttribute
+    public class ID : DbNameAttribute, INeo4jAttribute
     {
         IDType idType;
         CollisionResolutionStrategy collisionResolutionStrategy;
         public ID(IDType idType, CollisionResolutionStrategy collisionResolutionStrategy = CollisionResolutionStrategy.Rand_Base62_10)
+            : base("Id")
         {
             this.idType = idType;
             this.collisionResolutionStrategy = collisionResolutionStrategy;

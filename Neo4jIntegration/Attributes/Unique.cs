@@ -4,11 +4,7 @@ using System.Text;
 
 namespace Neo4jIntegration.Attributes
 {
-    public class Unique : Attribute, INeo4jAttribute, IOnWriteAttribute
+    public class Unique : Attribute, INeo4jAttribute
     {
-        public virtual bool OnWrite(DependencyInjector depInj)
-        {
-            return false;
-        }
     }
 }

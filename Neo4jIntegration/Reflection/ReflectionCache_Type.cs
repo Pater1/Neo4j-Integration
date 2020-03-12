@@ -20,9 +20,7 @@ namespace Neo4jIntegration.Reflection
             public IEnumerable<Property> WritePropsList => props.Select(x => x.Value).Except(new ReflectionCache.Property[] { ID }).Prepend(ID);
             public IEnumerable<string> PropNames => props.Select(x => x.Key);
             public string Name => cachedType.Name;
-            public IEnumerable<IOnReadAttribute> onReads => neo4JAttributes.Where(x => x is IOnReadAttribute).Cast<IOnReadAttribute>();
-            public IEnumerable<IOnWriteAttribute> onWrites => neo4JAttributes.Where(x => x is IOnWriteAttribute).Cast<IOnWriteAttribute>();
-
+           
             public Type(System.Type buildFrom, bool noCheck)
             {
                 cachedType = buildFrom;

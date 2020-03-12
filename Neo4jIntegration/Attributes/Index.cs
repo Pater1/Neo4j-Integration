@@ -6,22 +6,12 @@ using System.Text;
 
 namespace Neo4jIntegration.Attributes
 {
-    public class Index : Attribute, INeo4jAttribute, IOnWriteAttribute
+    public class Index : Attribute, INeo4jAttribute
     {
         string indexName;
         public Index(string indexName)
         {
             this.indexName = indexName;
-        }
-
-        public bool OnWrite(DependencyInjector depInj)
-        {
-            ITransactionalGraphClient client = depInj.Get<ITransactionalGraphClient>("GraphClient");
-            if (!client.CheckIndexExists("Persons", IndexFor.Node))
-                client.CreateIndex("Persons", 
-                    new IndexConfiguration { Provider = IndexProvider.lucene, Type = IndexType.exact }, 
-                    IndexFor.Node);
-            return false;
         }
     }
 }

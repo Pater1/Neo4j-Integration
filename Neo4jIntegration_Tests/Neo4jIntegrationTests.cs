@@ -176,7 +176,7 @@ namespace plm_testing
             c2.Id = (new Guid(50,49,48,47,46,45,44,43,42,41,40)).ToString("n");
             c2.Hex.Add("DEF987", AcceptanceState.Accepted);
             c.Template.Add(c2, AcceptanceState.RolledBack);
-            s.Colors.Add(new ReferenceCollection<Color>(new Color[] { c }), AcceptanceState.Suggested);
+            s.Colors.Add(new List<Color>(new Color[] { c }), AcceptanceState.Suggested);
             s.Template = new Style()
             {
                 Name = "Template",
@@ -192,18 +192,30 @@ namespace plm_testing
             client.Connect();
 
             s.Save(client);
-            
+
             var a = Neo4jSet<Style>.All(client)
                 .Include(x => x.Template.Template)
-                .IncludeCollection<ReferenceCollection<VersionableItteration<Category>>, VersionableItteration<Category>, Category>
-                    (x => x.Category.Versions, x => x.Value)
+                
+                .Include(x => x.Category.Start.Value)
+                .Include(x => x.Category.Start.Next.Value)
+                .Include(x => x.Category.Start.Next.Next.Value)
+
                 .Include(x => x.Colors)
-                .ThenIncludeCollection<ReferenceCollection<VersionableItteration<ReferenceCollection<Color>>>, VersionableItteration<ReferenceCollection<Color>>, ReferenceCollection<Color>>
-                    (x => x.Versions, x => x.Value)
-                .ThenIncludeCollection<ReferenceCollection<Color>, Color, Versionable<string>>
-                    (x => x, x => x.Hex)
-                .ThenIncludeCollection<Versionable<string>, VersionableItteration<string>, string>
-                    (x => x, x => x.Value)
+                .ThenInclude(x => x.Start)
+                .ThenInclude(x => x.Value)
+
+                .Include(x => x.Colors)
+                .ThenInclude(x => x.Start)
+                .ThenInclude(x => x.Next)
+                .ThenInclude(x => x.Value)
+
+                .Include(x => x.Colors)
+                .ThenInclude(x => x.Start)
+                .ThenInclude(x => x.Next)
+                .ThenInclude(x => x.Next)
+                .ThenInclude(x => x.Value)
+                
+                //.Where(x => x.Id == (new Guid(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)).ToString("n"));
                 ;
             //TODO: ReadValidate
             ReflectReadDictionary<Style>[] sOut = a.Results.ToArray();
