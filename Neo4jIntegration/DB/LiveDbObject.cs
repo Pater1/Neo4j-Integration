@@ -1,4 +1,4 @@
-﻿using Neo4jClient.Transactions;
+﻿using Neo4j.Driver;
 using Neo4jIntegration.Attributes;
 using Neo4jIntegration.DB;
 using Neo4jIntegration.Models;
@@ -11,6 +11,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace Neo4jIntegration.DB
 {
@@ -20,15 +21,15 @@ namespace Neo4jIntegration.DB
         private static Dictionary<string, LiveDbObject<T>> livePool { get; } = new Dictionary<string, LiveDbObject<T>>();
 
         public T BackingInstance { get; }
-        public Func<ITransactionalGraphClient> GraphClientFactory { get; }
-        public LiveObjectMode LiveMode { get; }
+        public Func<IDriver> GraphClientFactory { get; }
+        public LiveObjectMode LiveMode { get; set; }
 
         public static implicit operator T(LiveDbObject<T> rrdt)
         {
             return rrdt.BackingInstance;
         }
 
-        public static LiveDbObject<T> Build(T buildFor, Func<ITransactionalGraphClient> graphClient, LiveObjectMode liveMode)
+        public static LiveDbObject<T> Build(T buildFor, Func<IDriver> graphClient, LiveObjectMode liveMode)
         {
             LiveDbObject<T> ret = null;
             if (buildFor is INeo4jNode)
@@ -61,7 +62,7 @@ namespace Neo4jIntegration.DB
             }
             return new LiveDbObject<T>(buildFor, graphClient, liveMode);
         }
-        private LiveDbObject(T backingInstance, Func<ITransactionalGraphClient> graphClientFactory, LiveObjectMode liveMode)
+        private LiveDbObject(T backingInstance, Func<IDriver> graphClientFactory, LiveObjectMode liveMode)
         {
             BackingInstance = backingInstance;
             GraphClientFactory = graphClientFactory;
@@ -87,56 +88,98 @@ namespace Neo4jIntegration.DB
             return this;
         }
 
-        public LiveDbObject<T> SetChainable<TValue>(Expression<Func<T, TValue>> expression, TValue value)
-        {
-            Set(expression, value);
-            return this;
-        }
-        public void Set<TValue>(Expression<Func<T, TValue>> expression, TValue value)
+        public async Task Set<TValue>(Expression<Func<T, TValue>> expression, TValue value)
         {
             var member = (expression.Body as MemberExpression).Member as PropertyInfo;
             var prop = PropCache.props[member.Name];
 
             if ((LiveMode & LiveObjectMode.LiveWrite) != 0)
             {
-                DBOps.SaveValue(this, prop, value, GraphClientFactory);
+                await DBOps.SaveValue(this, prop, value, GraphClientFactory);
             }
             else if ((LiveMode & LiveObjectMode.DeferedWrite) != 0)
             {
-                ThreadPool.QueueUserWorkItem(_ =>
+                ThreadPool.QueueUserWorkItem(async _ =>
                 {
-                    DBOps.SaveValue(this, prop, value, GraphClientFactory);
+                    await DBOps.SaveValue(this, prop, value, GraphClientFactory);
                 });
             }
 
             member.SetValue(BackingInstance, value);
         }
-        public LiveDbObject<T> GetChainable<TValue>(Expression<Func<T, TValue>> expression, out TValue value)
-        {
-            value = Get(expression);
-            return this;
-        }
-        public TValue Get<TValue>(Expression<Func<T, TValue>> expression)
+        public async Task<TValue> Get<TValue>(Expression<Func<T, TValue>> expression)
         {
 
             if ((LiveMode & LiveObjectMode.LiveRead) != 0)
             {
-                TValue remote = Neo4jSet<T>.All(GraphClientFactory).Include(expression).Results.Where(x => x["Id"] == this["Id"]).Select(x => x.Get(expression)).Cast<TValue>().SingleOrDefault();
-                Set(expression, remote);
-                return remote;
+                IEnumerable<LiveDbObject<T>> results = (await Neo4jSet<T>.All(GraphClientFactory).Include(expression).ReturnAsync()).ToList();
+                IEnumerable<LiveDbObject<T>> filtered = results.Where(x => x["Id"] == this["Id"]).ToList();
+                TValue[] vals = await Task.WhenAll(filtered.Select(x => {
+                    LiveObjectMode oldMode = x.LiveMode;
+                    x.LiveMode = LiveObjectMode.Ignore;
+
+                    var ret = x.Get(expression);
+
+                    x.LiveMode = oldMode;
+
+                    return ret;
+                }));
+                TValue remote = vals.SingleOrDefault();
+                if (!remote.Equals(default))
+                {
+                    await Set(expression, remote);
+                    return remote;
+                }
             }
             else if ((LiveMode & LiveObjectMode.DeferedRead) != 0)
             {
-                ThreadPool.QueueUserWorkItem(_ =>
+                ThreadPool.QueueUserWorkItem(async _ =>
                 {
                     TValue remote = Neo4jSet<T>.All(GraphClientFactory).Include(expression).Results.Where(x => x["Id"] == this["Id"]).Select(x => x.Get(expression)).Cast<TValue>().SingleOrDefault();
-                    Set(expression, remote);
+                    await Set(expression, remote);
                 });
             }
             //TODO: get via CacheProperty to avoid recursion
             var member = (expression.Body as MemberExpression).Member as PropertyInfo;
             TValue local = (TValue)member.GetValue(BackingInstance);
             return local;
+        }
+
+        public async Task<TRet> Call<TObj, TValue, TRet>(Expression<Func<T, TObj>> selector, Func<TObj, TValue, TRet> call, TValue value) where TObj : INeo4jNode
+        {
+            TObj obj = await Get(selector);
+            TRet ret = call(obj, value);
+
+            if ((LiveMode & LiveObjectMode.LiveWrite) != 0)
+            {
+                await obj.Save(GraphClientFactory);
+            }
+            else if ((LiveMode & LiveObjectMode.DeferedWrite) != 0)
+            {
+                ThreadPool.QueueUserWorkItem(async _ =>
+                {
+                    await obj.Save(GraphClientFactory);
+                });
+            }
+
+            return ret;
+        }
+        public async Task Call<TObj, TValue>(Expression<Func<T, TObj>> selector, Action<TObj, TValue> call, TValue value) where TObj : INeo4jNode
+        {
+            TObj obj = await Get(selector);
+            call(obj, value);
+
+            if ((LiveMode & LiveObjectMode.LiveWrite) != 0)
+            {
+                await DBOps.SaveNode<T>(this, GraphClientFactory);
+            }
+            else if ((LiveMode & LiveObjectMode.DeferedWrite) != 0)
+            {
+                ThreadPool.QueueUserWorkItem(async _ =>
+                {
+                    await obj.Save(GraphClientFactory);
+                });
+            }
         }
 
         public string this[int index] => PropCache.PropNames.ElementAt(index);

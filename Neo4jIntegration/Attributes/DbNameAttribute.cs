@@ -4,7 +4,6 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
-using Neo4jClient;
 using Neo4jIntegration.DB;
 using Neo4jIntegration.Models;
 

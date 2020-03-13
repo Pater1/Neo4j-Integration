@@ -9,6 +9,7 @@ using System.Text;
 
 namespace Neo4jIntegration.Models.Versioning
 {
+    [DbRequireParent]
     public class Versionable<T> : INeo4jNode, IEnumerable<VersionableItteration<T>>, IEnumerable<T>
     {
         [ID(IDAttribute.CollisionResolutionStrategy.Rand_Base64_10)]

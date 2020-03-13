@@ -16,6 +16,7 @@ namespace Neo4jIntegration.Reflection
             public readonly INeo4jAttribute[] neo4JAttributes;
             public readonly Property? ID;
             public readonly Dictionary<string, Property> props;
+            public readonly bool parentNodeRequired;
             public IEnumerable<string> PropNames => props.Select(x => x.Key);
             public string Name => cachedType.Name;
            
@@ -31,6 +32,11 @@ namespace Neo4jIntegration.Reflection
                         x => x.Name,
                         x => new Property(x)
                     );
+                parentNodeRequired = neo4JAttributes.Where(x =>
+                {
+                    DbRequireParentAttribute dbRequireParent = x as DbRequireParentAttribute;
+                    return dbRequireParent != null && dbRequireParent.parentNodeRequired;
+                }).Any();
                 try
                 {
                     ID = props.Where(x => x.Value.isID).Single().Value;

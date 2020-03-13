@@ -11,7 +11,7 @@ using System.Text;
 
 namespace Neo4jIntegration.Models.Versioning
 {
-
+    [DbRequireParent]
     [System.Serializable]
     public class VersionableItteration<T> : INeo4jNode
     {

@@ -1,8 +1,4 @@
-﻿using Neo4jClient;
-using Neo4jClient.Transactions;
-using System;
-using System.Collections.Generic;
-using System.Text;
+﻿using System;
 
 namespace Neo4jIntegration.Attributes
 {

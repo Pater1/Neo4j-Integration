@@ -5,6 +5,7 @@ using System.Text;
 
 namespace Neo4jIntegration.Models
 {
+    [DbRequireParent]
     public class ValueAsNode<T> : INeo4jNode where T: unmanaged
     {
         [ID(IDAttribute.CollisionResolutionStrategy.Long_DateTime)]

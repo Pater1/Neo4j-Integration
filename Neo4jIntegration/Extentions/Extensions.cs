@@ -1,4 +1,5 @@
 ﻿using Neo4jIntegration.Models;
+using Neo4jIntegration.Reflection;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -40,6 +41,24 @@ namespace Neo4jIntegration
                 {
                     ret = t.Name;
                 }
+
+                ret = ret.Split(":")
+                    .Distinct()
+                    .Except(new string[]{
+                        "ParentRequired",
+                        "Independant"
+                    })
+                    .Aggregate((a, b) => $"{a}:{b}");
+
+                if (ReflectionCache.GetTypeData(t).parentNodeRequired)
+                {
+                    ret += ":ParentRequired";
+                }
+                else
+                {
+                    ret += ":Independant";
+                }
+
 
                 lock (labelsCache)
                 {

@@ -1,7 +1,4 @@
-﻿using Neo4j.Driver.V1;
-using Neo4jClient;
-using Neo4jClient.Cypher;
-using Neo4jClient.Transactions;
+﻿using Neo4j.Driver;
 using Neo4jIntegration.Attributes;
 using Neo4jIntegration.DB;
 using Neo4jIntegration.Extentions;
@@ -27,14 +24,14 @@ namespace Neo4jIntegration
     {
         public static readonly string setName = typeof(T).QuerySaveName();
 
-        public static LiveDbObject<T> SingleValue(string id, Func<ITransactionalGraphClient> client)
+        public static LiveDbObject<T> SingleValue(string id, Func<IDriver> client)
             => Single(id, client).Results.FirstOrDefault();
-        public static IEnumerable<LiveDbObject<T>> AllValue(Func<ITransactionalGraphClient> client)
+        public static IEnumerable<LiveDbObject<T>> AllValue(Func<IDriver> client)
             => All(client).Results;
 
-        public static TypeWrappedCypherFluentQuery<T, T> Single(string id, Func<ITransactionalGraphClient> client)
+        public static TypeWrappedCypherFluentQuery<T, T> Single(string id, Func<IDriver> client)
             => All(client).Where(x => (x as INeo4jNode).Id == id);
-        public static TypeWrappedCypherFluentQuery<T, T> All(Func<ITransactionalGraphClient> client)
+        public static TypeWrappedCypherFluentQuery<T, T> All(Func<IDriver> client)
         {
             return TypeWrappedCypherFluentQuery<T, T>.Build<T>(client);
         }
@@ -46,21 +43,21 @@ namespace Neo4jIntegration
         public static readonly string name = typeof(T).QuerySaveName();
         public static readonly string labels = typeof(T).QuerySaveLabels();
 
-        public ICypherFluentQuery internalQ { get; set; }
+        public StringBuilder internalQ { get; set; }
         private TypeWrappedCypherFluentQuery<T, T> rQ { get; set; }
         public List<PropertyInfo> pulledChildNodes { get; set; } = new List<PropertyInfo>();
-        public Func<ITransactionalGraphClient> clientFactory { get; }
+        public Func<IDriver> clientFactory { get; }
         //public List<ReadQueryParams<T>> readQueryParams { get; internal set; } = new List<ReadQueryParams<T>>();
         public List<string> pulledPaths { get; set; } = new List<string>();
 
         public string quearyName { get; } = "Rootobj";
         //public Expression<Func<IEnumerable<T>, IEnumerable<S>>> quearyExpression { get; internal set; }
 
-        public IEnumerable<LiveDbObject<T>> Results => this.Return();
+        public IEnumerable<LiveDbObject<T>> Results => this.ReturnAsync().Result;
 
         public int PathCount { get; set; } = 0;
 
-        public static TypeWrappedCypherFluentQuery<U, U> Build<U>(Func<ITransactionalGraphClient> client) //where U : class, INeo4jNode, new()
+        public static TypeWrappedCypherFluentQuery<U, U> Build<U>(Func<IDriver> client) //where U : class, INeo4jNode, new()
         {
             TypeWrappedCypherFluentQuery<U, U> ths = new TypeWrappedCypherFluentQuery<U, U>(client);
             ths.rQ = ths;
@@ -79,106 +76,190 @@ namespace Neo4jIntegration
                 rQ = rQ
             };
         }
-        private TypeWrappedCypherFluentQuery(ICypherFluentQuery internalQuery, Func<ITransactionalGraphClient> client, string path)
+        private TypeWrappedCypherFluentQuery(StringBuilder internalQuery, Func<IDriver> client, string path)
         {
             internalQ = internalQuery;
             this.clientFactory = client;
             this.quearyName = path;
         }
-        private TypeWrappedCypherFluentQuery(Func<ITransactionalGraphClient> client)
+        private TypeWrappedCypherFluentQuery(Func<IDriver> client)
         {
-            internalQ = client().Cypher.Match($"p0 = ({quearyName}:{labels})");
+            //internalQ = client().Cypher.Match($"p0 = ({quearyName}:{labels})");
+
+            internalQ = new StringBuilder();
+            internalQ.AppendLine($"MATCH p0 = ({quearyName}:{labels})");
             PathCount++;
             this.clientFactory = client;
         }
 
-        private IEnumerable<LiveDbObject<T>> Return()
+        public async Task<IEnumerable<LiveDbObject<T>>> ReturnAsync()
         {
-            StringBuilder sb = new StringBuilder();
+            //StringBuilder sb = new StringBuilder();
 
+            //for (int i = 0; i < PathCount; i++)
+            //{
+            //    if (i > 0)
+            //    {
+            //        sb.Append(" + ");
+            //    }
+            //    sb.Append($"collect(p{i})");
+            //}
+            //sb.Append($" AS paths{Environment.NewLine}");
+
+            //sb.Append($"UNWIND paths AS ret{Environment.NewLine}");
+            //sb.Append($"WITH DISTINCT ret AS dist{Environment.NewLine}");
+            //sb.Append($"WITH nodes(dist) + collect(labels(nodes(dist)[0])) + collect(labels(nodes(dist)[1])) + type(relationships(dist)[0]) AS meta{Environment.NewLine}");
+            //sb.Append($"WITH collect(meta) AS metas");
+
+            //internalQ = internalQ.AppendLine("WITH " + sb.ToString());
+            //internalQ = internalQ.AppendLine("RETURN metas as json");
+
+            internalQ.Append("WITH ");
             for (int i = 0; i < PathCount; i++)
             {
                 if (i > 0)
                 {
-                    sb.Append(" + ");
+                    internalQ.Append(" + ");
                 }
-                sb.Append($"collect(p{i})");
+                internalQ.Append($"collect(p{i})");
             }
-            sb.Append($" AS paths{Environment.NewLine}");
+            internalQ.Append($" AS paths{Environment.NewLine}");
 
-            sb.Append($"UNWIND paths AS ret{Environment.NewLine}");
-            sb.Append($"WITH DISTINCT ret AS dist{Environment.NewLine}");
-            sb.Append($"WITH nodes(dist) + collect(labels(nodes(dist)[0])) + collect(labels(nodes(dist)[1])) + type(relationships(dist)[0]) AS meta{Environment.NewLine}");
-            sb.Append($"with collect(meta) AS metas");
-            
-            internalQ = internalQ.With(sb.ToString());
-            var reter = internalQ.Return<string[][]>("metas as json");
+            internalQ.Append($"UNWIND paths AS ret{Environment.NewLine}");
+            internalQ = internalQ.AppendLine("RETURN ret as json");
 
-            Dictionary<string, object> nodeHeap = new Dictionary<string, object>();
-            var raw = reter.Results.Single()
-                .AsParallel()
-                .Select(x =>
-                {
-                    IDictionary<string, JToken?> parentJobj = JsonConvert.DeserializeObject<Dictionary<string, object>>(x[0])["data"] as JObject;
-                    Type parentType = parentJobj.TryGetValue("__type__", out JToken? parentTypeStr) ?
-                        ReflectionCache.BuildType(parentTypeStr.ToString(), typeof(INeo4jNode)) :
-                        ReflectionCache.BuildType(JsonConvert.DeserializeObject<string[]>(x[2]), typeof(INeo4jNode));
-                    object parentInstance = ManualDeserializeNode(
-                        parentJobj.ToDictionary(x => x.Key, x => x.Value),
-                        parentType,
-                        nodeHeap
-                    );
-
-                    IDictionary<string, JToken?> childJobj = JsonConvert.DeserializeObject<Dictionary<string, object>>(x[1])["data"] as JObject;
-                    Type childType = childJobj.TryGetValue("__type__", out JToken? childTypeStr) ?
-                            ReflectionCache.BuildType(childTypeStr.ToString(), typeof(INeo4jNode)) :
-                            ReflectionCache.BuildType(JsonConvert.DeserializeObject<string[]>(x[3]), typeof(INeo4jNode));
-                    object childInstance = ManualDeserializeNode(
-                        childJobj.ToDictionary(x => x.Key, x => x.Value),
-                        childType,
-                        nodeHeap
-                    );
-
-                    return ((INeo4jNode parentInstance, INeo4jNode childInstance, string relationship))(
-                        (INeo4jNode)parentInstance,
-                        (INeo4jNode)childInstance,
-                        x[4]
-                    );
-                })
-                .ToArray();
-
-            var withProps = raw.Select(x => (x.parentInstance, x.childInstance,
-                ReflectionCache.GetTypeData(x.parentInstance).props
-                    .Where(y =>
-                        y.Key == x.relationship
-                        ||
-                        (
-                            y.Value.neo4JAttributes.Where(x => x is DbNameAttribute).Any()
-                            &&
-                            y.Value.neo4JAttributes.Select(x => x as DbNameAttribute).Where(x => x != null).FirstOrDefault()?.Name
-                            ==
-                            x.relationship
-                        )
-                     )
-                    .SingleOrDefault()
-                    .Value
-            )).ToList();
-
-            foreach(var v in withProps)
+            //var reter = internalQ.Return<string[][]>("metas as json");
+            using (IDriver driver = clientFactory())
             {
-                v.Item3.PushValue(v.parentInstance, v.childInstance);
+                Query q = new Query(internalQ.ToString());
+                IResultCursor resultCursor = await driver.AsyncSession().RunAsync(q);
+                List<IRecord> results = await resultCursor.ToListAsync();
+
+                Dictionary<string, INeo4jNode> nodeHeap = new Dictionary<string, INeo4jNode>();
+                var raw = results.SelectMany(x =>
+                {
+                    var h = x["json"].As<IPath>();
+
+                    List<INeo4jNode> nodes = h.Nodes.Select(a =>
+                    {
+                        INeo4jNode parentInstance;
+                        if (!nodeHeap.TryGetValue(a["Id"].ToString(), out parentInstance))
+                        {
+                            Type parentType = ReflectionCache.BuildType(a["__type__"].As<string>());
+                            parentInstance = Activator.CreateInstance(parentType) as INeo4jNode;
+
+                            ReflectionCache.Type typeData = ReflectionCache.GetTypeData(parentType);
+                            foreach (KeyValuePair<string, object> k in a.Properties)
+                            {
+                                if (typeData.props.TryGetValue(k.Key, out ReflectionCache.Property prop))
+                                {
+                                    prop.PushValue(parentInstance, DBOps.Neo4jDecode(k.Value, prop.info.PropertyType));
+                                }
+                            }
+
+                            nodeHeap.Add(a["Id"].ToString(), parentInstance);
+                        }
+                        return parentInstance;
+                    }).ToList();
+
+                    return h.Relationships.Select((x,i) => (x,i))
+                        .Join(nodes.Select((x,i) => (x,i)), a => a.i, b => b.i, (a,b) => (a.x,b.x,a.i))
+                        .Join(nodes.Select((x,i) => (x,i)), a => a.i, b => b.i-1, (a,b) => (a.Item2,b.x,a.Item1))
+                        .Select(a => (a.Item1.Id, a.x.Id, a.Item3.Type))
+                        .Cast<(string parentID, string childID, string relationship)>();
+                        
+
+                    //List<(INeo4jNode, INeo4jNode, string)> retLst = new List<(INeo4jNode, INeo4jNode, string)>();
+                    
+                    //return retLst;
+
+                    //var h2 = h.Select(y =>
+                    //        y.As<List<object>>()
+                    //    )
+                    //    .Select(z => new
+                    //    {
+                    //        parent = z[0].As<INode>(),
+                    //        child = z[1].As<INode>(),
+                    //        relationship = z[4].As<string>()
+                    //    })
+                    //    .Select(x =>
+                    //    {
+                    //        INeo4jNode parentInstance;
+                    //        if (!nodeHeap.TryGetValue(x.parent["Id"].ToString(), out parentInstance))
+                    //        {
+                    //            Type parentType = ReflectionCache.BuildType(x.parent["__type__"].As<string>());
+                    //            parentInstance = Activator.CreateInstance(parentType) as INeo4jNode;
+
+                    //            ReflectionCache.Type typeData = ReflectionCache.GetTypeData(parentType);
+                    //            foreach (KeyValuePair<string, object> k in x.parent.Properties)
+                    //            {
+                    //                if (typeData.props.TryGetValue(k.Key, out ReflectionCache.Property prop))
+                    //                {
+                    //                    prop.PushValue(parentInstance, DBOps.Neo4jDecode(k.Value, prop.info.PropertyType));
+                    //                }
+                    //            }
+
+                    //            nodeHeap.Add(x.parent["Id"].ToString(), parentInstance);
+                    //        }
+
+
+                    //        INeo4jNode childInstance;
+                    //        if (!nodeHeap.TryGetValue(x.child["Id"].ToString(), out childInstance))
+                    //        {
+                    //            Type childType = ReflectionCache.BuildType(x.child["__type__"].As<string>());
+                    //            childInstance = Activator.CreateInstance(childType) as INeo4jNode;
+
+                    //            ReflectionCache.Type typeData = ReflectionCache.GetTypeData(childType);
+                    //            foreach (KeyValuePair<string, object> k in x.child.Properties)
+                    //            {
+                    //                if (typeData.props.TryGetValue(k.Key, out ReflectionCache.Property prop))
+                    //                {
+                    //                    prop.PushValue(childInstance, DBOps.Neo4jDecode(k.Value, prop.info.PropertyType));
+                    //                }
+                    //            }
+
+                    //            nodeHeap.Add(x.child["Id"].ToString(), childInstance);
+                    //        }
+
+                    //        return (parentInstance, childInstance, x.relationship);
+                    //    })
+                    //    .ToArray();
+                    //return h;
+                });
+
+                var withProps = raw.Select(x => (x.Item1, x.Item2,
+                    ReflectionCache.GetTypeData(nodeHeap[x.Item1]).props
+                        .Where(y =>
+                            y.Key == x.Item3
+                            ||
+                            (
+                                y.Value.neo4JAttributes.Where(x => x is DbNameAttribute).Any()
+                                &&
+                                y.Value.neo4JAttributes.Select(x => x as DbNameAttribute).Where(x => x != null).FirstOrDefault()?.Name
+                                ==
+                                x.Item3
+                            )
+                         )
+                        .SingleOrDefault()
+                        .Value
+                )).ToList();
+
+                foreach (var v in withProps)
+                {
+                    v.Item3.PushValue(nodeHeap[v.Item1], nodeHeap[v.Item2]);
+                }
+
+                var ret = nodeHeap
+                    .Select(x => x.Value)
+                    //.Where(x => !raw.Select(a => a.childID).Contains(x.Key))
+                    .Where(x => x is T)
+                    .Cast<T>()
+                    .Distinct()
+                    .Select(x => LiveDbObject<T>.Build(x, clientFactory, LiveObjectMode.LiveWrite | LiveObjectMode.DeferedRead))
+                    .ToArray();
+
+                return ret;
             }
-
-            var ret = nodeHeap
-                //remove child-only/non-root retreived values
-                .Join(raw, x => x.Key, x => x.Item1.Id, (a, b) => a.Value)
-                .Distinct()//TODO: dedupe on ID, rather than pointer
-                .Where(x => x != null && x is T)
-                .Cast<T>()
-                .Select(x => LiveDbObject<T>.Build(x, clientFactory, LiveObjectMode.LiveWrite))
-                .ToArray();
-
-            return ret;
         }
         private static object ManualDeserializeNode(IDictionary<string, JToken> retValsJson, Type type, IDictionary<string, object> nodeHeap)
         {
@@ -241,7 +322,7 @@ namespace Neo4jIntegration
         public TypeWrappedCypherFluentQuery<T, S> ThenWhere(Expression<Func<S, bool>> delegat)
         {
             delegat = Scrub(delegat);
-            internalQ = internalQ.Where(Scrub(delegat));
+            //internalQ = internalQ.Where(Scrub(delegat));
             return this;
         }
         public TypeWrappedCypherFluentQuery<T, U> Include<U>(Expression<Func<T, U>> p) //where U : class, INeo4jNode, new()
@@ -277,7 +358,7 @@ namespace Neo4jIntegration
 
                 if (!pulledPaths.Contains(v.Item1))
                 {
-                    internalQ = internalQ.OptionalMatch($"p{PathCount} = ({parentName})-[:{v.Item2.neo4JAttributes.Select(x => x as DbNameAttribute).Where(x => x != null).FirstOrDefault()?.Name ?? v.Item2.info.Name}]->({v.Item1}:{v.Item2.info.PropertyType.QuerySaveLabels()})");
+                    internalQ = internalQ.AppendLine($"OPTIONAL MATCH p{PathCount} = ({parentName})-[:{v.Item2.neo4JAttributes.Select(x => x as DbNameAttribute).Where(x => x != null).FirstOrDefault()?.Name ?? v.Item2.info.Name}]->({v.Item1}:{v.Item2.info.PropertyType.QuerySaveLabels()})");
                     pulledPaths.Add(v.Item1);
                     PathCount++;
                 }
