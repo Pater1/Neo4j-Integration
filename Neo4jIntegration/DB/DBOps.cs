@@ -20,23 +20,25 @@ namespace Neo4jIntegration.DB
     {
         private static async Task DbCleanup(this IAsyncTransaction transaction)
         {
-            await transaction.RunAsync(@"
-MATCH (n)
-WHERE NOT (n)<--()
-AND NOT ""Independant"" IN LABELS(n)
-OPTIONAL MATCH(n2: ParentRequired) < --(n)
-DETACH DELETE n, n2
-            ");
+            //            await transaction.RunAsync(@"
+            //MATCH (n)
+            //WHERE NOT (n)<--()
+            //AND NOT ""Independant"" IN LABELS(n)
+            //OPTIONAL MATCH(n2:ParentRequired)<--(n)
+            //OPTIONAL MATCH(n3:ParentRequired)<--(n2)
+            //DETACH DELETE n, n2, n3
+            //            ");
         }
-        public static async Task SaveChildNode<T, TValue>(LiveDbObject<T> parent, LiveDbObject<T> child, Property prop, TValue value, Func<IDriver> graphClientFactory)
+        public static async Task SaveSubnode<T, TValue>(LiveDbObject<T> parent, Property prop, TValue value, Func<IDriver> graphClientFactory)
         {
             Dictionary<string, (string, bool)> savedIds = new Dictionary<string, (string, bool)>();
             using (IDriver graphClient = graphClientFactory())
             {
+                object o = prop.PullValue(parent.BackingInstance);
 
                 StringBuilder sb = new StringBuilder();
-                (StringBuilder query, Dictionary<string, (string, bool)> ids) parms
-                    = await SaveNodeInline(parent, (sb, savedIds), "root", graphClientFactory);
+                
+                (StringBuilder query, Dictionary<string, (string, bool)> ids) parms = await _SaveNodeRelationship(parent, (o, o.GetType()), prop.jsonName, (sb, savedIds), "parent", "child", graphClientFactory);
 
                 Query q = new Query(parms.query.ToString());
                 await graphClient.AsyncSession().WriteTransactionAsync(async x =>
@@ -110,6 +112,35 @@ DETACH DELETE n, n2
                 });
             }
         }
+        public static async Task SaveCollection<T, TValue>(LiveDbObject<T> parent, Property prop, TValue value, Func<IDriver> graphClientFactory)
+        {
+            Dictionary<string, (string, bool)> savedIds = new Dictionary<string, (string, bool)>();
+            using (IDriver graphClient = graphClientFactory())
+            {
+                object o = prop.PullValue(parent.BackingInstance);
+                
+                StringBuilder sb = new StringBuilder();
+
+                (StringBuilder query, Dictionary<string, (string, bool)> ids) parms = 
+                    await _SaveEnumerableNodeRelationship(parent, (o, o.GetType()), prop.jsonName, (sb, savedIds), "parent", "child", graphClientFactory);
+
+                Query q = new Query(parms.query.ToString());
+                await graphClient.AsyncSession().WriteTransactionAsync(async x =>
+                {
+                    try
+                    {
+                        await x.RunAsync(q);
+                        await x.DbCleanup();
+                        await x.CommitAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        await x.RollbackAsync();
+                        throw ex;
+                    }
+                });
+            }
+        }
 
         private static async Task<(StringBuilder query, Dictionary<string, (string, bool)> ids)> _SaveEnumerableNodeRelationship<T>(LiveDbObject<T> toSave, (object o, System.Type t) p, string relationshipName, (StringBuilder query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2, Func<IDriver> graphClientFactory)
         {
@@ -158,7 +189,6 @@ DETACH DELETE n, n2
             );
             return await (Task<(StringBuilder query, Dictionary<string, (string, bool)> ids)>)l.Compile().DynamicInvoke();
         }
-
         private static async Task<(StringBuilder query, Dictionary<string, (string, bool)> ids)> _SaveNodeRelationship<T>(LiveDbObject<T> toSave, (object o, System.Type t) p, string relationshipName, (StringBuilder query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2, Func<IDriver> graphClientFactory)
         {
             if (p.o == null)
@@ -270,7 +300,7 @@ DETACH DELETE n, n2
         private static async Task<(StringBuilder query, Dictionary<string, (string, bool)> ids)> SaveNodeRelationship<T, U>(LiveDbObject<T> toSave, LiveDbObject<U> toSaveB, string relationshipName, (StringBuilder query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2, Func<IDriver> graphClientFactory) where U : INeo4jNode
         {
 
-            string id1 = toSave["Id"].ToString();
+            string id1 = toSave["Id"]?.ToString();
             if (string.IsNullOrWhiteSpace(id1))
             {
                 id1 = Guid.NewGuid().ToString("n");
@@ -278,7 +308,7 @@ DETACH DELETE n, n2
             toSave["Id"] = id1;
 
             bool setId2 = false;
-            string id2 = toSaveB["Id"].ToString();
+            string id2 = toSaveB["Id"]?.ToString();
             if (string.IsNullOrWhiteSpace(id2))
             {
                 id2 = Guid.NewGuid().ToString("n");
@@ -319,15 +349,10 @@ DETACH DELETE n, n2
             }
             else
             {
-                //TODO Delete other relationships?
                 if (!parms.ids[id2].Item2)
                 {
-                    string uniq = $"_{Guid.NewGuid().ToString("n")}";
                     parms.query = parms.query.AppendLine($"MERGE (_{parms.ids[id2].Item1}:{typeof(U).QuerySaveLabels()} {{ Id: {Neo4jEncode(toSaveB["Id"].ToString())} }})");
-                    parms.query = parms.query.AppendLine($"\tMERGE (_{parms.ids[id1].Item1})-[{uniq}:{relationshipName}]->()");
-                    parms.query = parms.query.AppendLine($"\tDELETE {uniq}");
                 }
-
                 parms.query = parms.query.AppendLine($"MERGE (_{parms.ids[id1].Item1})-[{dupeCheck}:{relationshipName}]->(_{parms.ids[id2].Item1})");
             }
             parms.query = parms.query.AppendLine($"SET {dupeCheck}.__type__ = \"{relationshipName}\"");

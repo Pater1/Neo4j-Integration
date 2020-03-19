@@ -18,7 +18,7 @@ namespace Neo4jIntegration.DB
     public class LiveDbObject<T> : IReadOnlyList<string>, IReadOnlyDictionary<string, object>
     {
         public static ReflectionCache.Type PropCache { get; } = ReflectionCache.GetTypeData(typeof(T));
-        private static Dictionary<string, LiveDbObject<T>> livePool { get; } = new Dictionary<string, LiveDbObject<T>>();
+        private static List<LiveDbObject<T>> livePool { get; } = new List<LiveDbObject<T>>();
 
         public T BackingInstance { get; }
         public Func<IDriver> GraphClientFactory { get; }
@@ -31,35 +31,39 @@ namespace Neo4jIntegration.DB
 
         public static LiveDbObject<T> Build(T buildFor, Func<IDriver> graphClient, LiveObjectMode liveMode)
         {
-            LiveDbObject<T> ret = null;
             if (buildFor is INeo4jNode)
             {
-                INeo4jNode node = buildFor as INeo4jNode;
-
-                if (string.IsNullOrWhiteSpace(node.Id))
+                LiveDbObject<T> tmp = new LiveDbObject<T>(buildFor, graphClient, liveMode);
+                LiveDbObject<T> pooled = livePool.Where(x =>
                 {
-                    node.Id = LiveDbObject<T>.PropCache.props["Id"].neo4JAttributes
-                        .Where(x => x is IDAttribute)
-                        .Cast<IDAttribute>()
-                        .Select(x => x.GenerateId())
-                        .Single();
+                    if (Object.ReferenceEquals(x.BackingInstance, buildFor))
+                    {
+                        return true;
+                    }
 
-                    ret = new LiveDbObject<T>(buildFor, graphClient, liveMode);
-                    livePool.Add(node.Id, ret);
-                    return ret;
-                }
-                else if (livePool.TryGetValue(node.Id, out ret))
+                    string strid = (buildFor as INeo4jNode).Id;
+                    if (string.IsNullOrWhiteSpace(strid))
+                    {
+                        return false;
+                    }
+                    else
+                    {
+                        return x["Id"].ToString() == strid;
+                    }
+                }).SingleOrDefault();
+
+                if (pooled == null)
                 {
-                    return ret;
+                    livePool.Add(tmp);
+                    return tmp;
                 }
                 else
                 {
-                    ret = new LiveDbObject<T>(buildFor, graphClient, liveMode);
-                    livePool.Add(node.Id, ret);
-                    return ret;
-
+                    return pooled;
                 }
             }
+
+            //non-INeo4jNode objects don't get pooled
             return new LiveDbObject<T>(buildFor, graphClient, liveMode);
         }
         private LiveDbObject(T backingInstance, Func<IDriver> graphClientFactory, LiveObjectMode liveMode)
@@ -93,15 +97,31 @@ namespace Neo4jIntegration.DB
             var member = (expression.Body as MemberExpression).Member as PropertyInfo;
             var prop = PropCache.props[member.Name];
 
+            Func<LiveDbObject<T>, TValue, Task> SaveTask = async (y, x) =>
+            {
+                if(x is INeo4jNode)
+                {
+                    await DBOps.SaveSubnode(this, prop, value, GraphClientFactory);
+                }
+                else if (typeof(TValue).IsEnumerable() && typeof(INeo4jNode).IsAssignableFrom(typeof(TValue).GetGenericArguments()[0]))
+                {
+                    await DBOps.SaveCollection(this, prop, value, GraphClientFactory);
+                }
+                else
+                {
+                    await DBOps.SaveValue(this, prop, value, GraphClientFactory);
+                }
+            };
+
             if ((LiveMode & LiveObjectMode.LiveWrite) != 0)
             {
-                await DBOps.SaveValue(this, prop, value, GraphClientFactory);
+                await SaveTask(this, value);
             }
             else if ((LiveMode & LiveObjectMode.DeferedWrite) != 0)
             {
                 ThreadPool.QueueUserWorkItem(async _ =>
                 {
-                    await DBOps.SaveValue(this, prop, value, GraphClientFactory);
+                    await SaveTask(this, value);
                 });
             }
 
@@ -109,12 +129,15 @@ namespace Neo4jIntegration.DB
         }
         public async Task<TValue> Get<TValue>(Expression<Func<T, TValue>> expression)
         {
+            var member = (expression.Body as MemberExpression).Member as PropertyInfo;
+            var prop = PropCache.props[member.Name];
 
             if ((LiveMode & LiveObjectMode.LiveRead) != 0)
             {
                 IEnumerable<LiveDbObject<T>> results = (await Neo4jSet<T>.All(GraphClientFactory).Include(expression).ReturnAsync()).ToList();
                 IEnumerable<LiveDbObject<T>> filtered = results.Where(x => x["Id"] == this["Id"]).ToList();
-                TValue[] vals = await Task.WhenAll(filtered.Select(x => {
+                TValue[] vals = await Task.WhenAll(filtered.Select(x =>
+                {
                     LiveObjectMode oldMode = x.LiveMode;
                     x.LiveMode = LiveObjectMode.Ignore;
 
@@ -127,7 +150,7 @@ namespace Neo4jIntegration.DB
                 TValue remote = vals.SingleOrDefault();
                 if (!remote.Equals(default))
                 {
-                    await Set(expression, remote);
+                    prop.PushValue(this.BackingInstance, remote);
                     return remote;
                 }
             }
@@ -135,14 +158,13 @@ namespace Neo4jIntegration.DB
             {
                 ThreadPool.QueueUserWorkItem(async _ =>
                 {
-                    TValue remote = Neo4jSet<T>.All(GraphClientFactory).Include(expression).Results.Where(x => x["Id"] == this["Id"]).Select(x => x.Get(expression)).Cast<TValue>().SingleOrDefault();
-                    await Set(expression, remote);
+                    IEnumerable<LiveDbObject<T>> ts = await Neo4jSet<T>.All(GraphClientFactory).Include(expression).ReturnAsync();
+                    TValue remote = ts.Where(x => x["Id"] == this["Id"]).Select(x => x.Get(expression)).Cast<TValue>().SingleOrDefault();
+                    prop.PushValue(this.BackingInstance, remote);
                 });
             }
-            //TODO: get via CacheProperty to avoid recursion
-            var member = (expression.Body as MemberExpression).Member as PropertyInfo;
-            TValue local = (TValue)member.GetValue(BackingInstance);
-            return local;
+
+            return (TValue)prop.PullValue(this.BackingInstance);
         }
 
         public async Task<TRet> Call<TObj, TValue, TRet>(Expression<Func<T, TObj>> selector, Func<TObj, TValue, TRet> call, TValue value) where TObj : INeo4jNode

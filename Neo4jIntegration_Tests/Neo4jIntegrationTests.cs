@@ -61,7 +61,7 @@ namespace plm_testing
                 return drvr;
             };
 
-            await s.Save(client);
+            //await s.Save(client);
 
             var a = Neo4jSet<Style>.All(client)
                 .Include(x => x.Template.Template)
@@ -78,10 +78,8 @@ namespace plm_testing
                 .ThenInclude(x => x.Start)
                 .ThenInclude(x => x.Next)
                 .ThenInclude(x => x.Value)
-
-                .Include(x => x.Colors)
+                .ThenIncludeCollection(x => x, x => x.Hex)
                 .ThenInclude(x => x.Start)
-                .ThenInclude(x => x.Next)
                 .ThenInclude(x => x.Next)
                 .ThenInclude(x => x.Value)
 
@@ -89,6 +87,7 @@ namespace plm_testing
                 ;
 
             LiveDbObject<Style>[] sOut = (await a.ReturnAsync()).ToArray();
+            Style[] sCache = sOut.Select(x => x.BackingInstance).ToArray();
 
             LiveDbObject<Style> templt = sOut.Single(x =>
             {
@@ -104,10 +103,7 @@ namespace plm_testing
                 return x.Get(y => y.Name).Result == "Super Template";
             });
 
-            Color c3 = new Color()
-            {
-
-            };
+            Color c3 = new Color();
             c3.Hex.Add("dahex", AcceptanceState.RolledBack);
             c3.Template.Add(c2, AcceptanceState.Finalized);
             await suprTemplt.Call(x => x.Colors, (y, a) => y.Add(a, AcceptanceState.Suggested), new List<Color>() { c, c2, c3 } as ICollection<Color>);

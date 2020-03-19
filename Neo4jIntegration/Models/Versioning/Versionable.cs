@@ -10,10 +10,11 @@ using System.Text;
 namespace Neo4jIntegration.Models.Versioning
 {
     [DbRequireParent]
-    public class Versionable<T> : INeo4jNode, IEnumerable<VersionableItteration<T>>, IEnumerable<T>
+    public class Versionable<T> : INeo4jNode/*, IEnumerable<VersionableItteration<T>>, IEnumerable<T>*/
     {
         [ID(IDAttribute.CollisionResolutionStrategy.Rand_Base64_10)]
-        public string Id { get; set; }
+        public string Id { get; 
+            set; }
         public bool IsActive { get; set; } = true;
 
         [DbName("FIRST")]
@@ -71,15 +72,15 @@ namespace Neo4jIntegration.Models.Versioning
             }
         }
 
-        IEnumerator IEnumerable.GetEnumerator()
-        {
-            return this.GetEnumerator();
-        }
+        //IEnumerator IEnumerable.GetEnumerator()
+        //{
+        //    return this.GetEnumerator();
+        //}
 
-        IEnumerator<T> IEnumerable<T>.GetEnumerator()
-        {
-            return this.Cast<T>().GetEnumerator();
-        }
+        //IEnumerator<T> IEnumerable<T>.GetEnumerator()
+        //{
+        //    return this.Cast<T>().GetEnumerator();
+        //}
 
         private VersionableItteration<T> last;
         private VersionableItteration<T> start;

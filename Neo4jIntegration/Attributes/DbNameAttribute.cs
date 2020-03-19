@@ -13,28 +13,12 @@ namespace Neo4jIntegration.Attributes
     {
         private static Dictionary<Type, string> nameCache = new Dictionary<Type, string>();
         public string Name { get; private set; }
-        public DbNameAttribute(Type relationshipType)
-        {
-            if (nameCache.ContainsKey(relationshipType))
-            {
-                Name = nameCache[relationshipType];
-            }
-            else
-            {
-                var relType = relationshipType.GetField("TypeKey", (BindingFlags)(~0)).GetValue(null);
-                if (relType != null)
-                {
-                    Name = relType.ToString();
-                }
-                else
-                {
-                    Name = relationshipType.QuerySaveName();
-                }
-                nameCache.Add(relationshipType, Name);
-            }
-        }
         public DbNameAttribute(string relationshipLabel)
         {
+            if(relationshipLabel == "ITEM")
+            {
+                throw new ArgumentException("The DbName \"ITEM\" is reserved for the serialization of collections! Please choose another DbName");
+            }
             Name = relationshipLabel;
         }
 

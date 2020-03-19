@@ -94,26 +94,6 @@ namespace Neo4jIntegration
 
         public async Task<IEnumerable<LiveDbObject<T>>> ReturnAsync()
         {
-            //StringBuilder sb = new StringBuilder();
-
-            //for (int i = 0; i < PathCount; i++)
-            //{
-            //    if (i > 0)
-            //    {
-            //        sb.Append(" + ");
-            //    }
-            //    sb.Append($"collect(p{i})");
-            //}
-            //sb.Append($" AS paths{Environment.NewLine}");
-
-            //sb.Append($"UNWIND paths AS ret{Environment.NewLine}");
-            //sb.Append($"WITH DISTINCT ret AS dist{Environment.NewLine}");
-            //sb.Append($"WITH nodes(dist) + collect(labels(nodes(dist)[0])) + collect(labels(nodes(dist)[1])) + type(relationships(dist)[0]) AS meta{Environment.NewLine}");
-            //sb.Append($"WITH collect(meta) AS metas");
-
-            //internalQ = internalQ.AppendLine("WITH " + sb.ToString());
-            //internalQ = internalQ.AppendLine("RETURN metas as json");
-
             internalQ.Append("WITH ");
             for (int i = 0; i < PathCount; i++)
             {
@@ -128,7 +108,6 @@ namespace Neo4jIntegration
             internalQ.Append($"UNWIND paths AS ret{Environment.NewLine}");
             internalQ = internalQ.AppendLine("RETURN ret as json");
 
-            //var reter = internalQ.Return<string[][]>("metas as json");
             using (IDriver driver = clientFactory())
             {
                 Query q = new Query(internalQ.ToString());
@@ -162,70 +141,10 @@ namespace Neo4jIntegration
                         return parentInstance;
                     }).ToList();
 
-                    return h.Relationships.Select((x,i) => (x,i))
-                        .Join(nodes.Select((x,i) => (x,i)), a => a.i, b => b.i, (a,b) => (a.x,b.x,a.i))
-                        .Join(nodes.Select((x,i) => (x,i)), a => a.i, b => b.i-1, (a,b) => (a.Item2,b.x,a.Item1))
-                        .Select(a => (a.Item1.Id, a.x.Id, a.Item3.Type))
+                    return h.Relationships
+                        .Select((x,i) => (nodes[i].Id, nodes[i+1].Id, x.Type))
                         .Cast<(string parentID, string childID, string relationship)>();
-                        
-
-                    //List<(INeo4jNode, INeo4jNode, string)> retLst = new List<(INeo4jNode, INeo4jNode, string)>();
-                    
-                    //return retLst;
-
-                    //var h2 = h.Select(y =>
-                    //        y.As<List<object>>()
-                    //    )
-                    //    .Select(z => new
-                    //    {
-                    //        parent = z[0].As<INode>(),
-                    //        child = z[1].As<INode>(),
-                    //        relationship = z[4].As<string>()
-                    //    })
-                    //    .Select(x =>
-                    //    {
-                    //        INeo4jNode parentInstance;
-                    //        if (!nodeHeap.TryGetValue(x.parent["Id"].ToString(), out parentInstance))
-                    //        {
-                    //            Type parentType = ReflectionCache.BuildType(x.parent["__type__"].As<string>());
-                    //            parentInstance = Activator.CreateInstance(parentType) as INeo4jNode;
-
-                    //            ReflectionCache.Type typeData = ReflectionCache.GetTypeData(parentType);
-                    //            foreach (KeyValuePair<string, object> k in x.parent.Properties)
-                    //            {
-                    //                if (typeData.props.TryGetValue(k.Key, out ReflectionCache.Property prop))
-                    //                {
-                    //                    prop.PushValue(parentInstance, DBOps.Neo4jDecode(k.Value, prop.info.PropertyType));
-                    //                }
-                    //            }
-
-                    //            nodeHeap.Add(x.parent["Id"].ToString(), parentInstance);
-                    //        }
-
-
-                    //        INeo4jNode childInstance;
-                    //        if (!nodeHeap.TryGetValue(x.child["Id"].ToString(), out childInstance))
-                    //        {
-                    //            Type childType = ReflectionCache.BuildType(x.child["__type__"].As<string>());
-                    //            childInstance = Activator.CreateInstance(childType) as INeo4jNode;
-
-                    //            ReflectionCache.Type typeData = ReflectionCache.GetTypeData(childType);
-                    //            foreach (KeyValuePair<string, object> k in x.child.Properties)
-                    //            {
-                    //                if (typeData.props.TryGetValue(k.Key, out ReflectionCache.Property prop))
-                    //                {
-                    //                    prop.PushValue(childInstance, DBOps.Neo4jDecode(k.Value, prop.info.PropertyType));
-                    //                }
-                    //            }
-
-                    //            nodeHeap.Add(x.child["Id"].ToString(), childInstance);
-                    //        }
-
-                    //        return (parentInstance, childInstance, x.relationship);
-                    //    })
-                    //    .ToArray();
-                    //return h;
-                });
+                }).ToList();
 
                 var withProps = raw.Select(x => (x.Item1, x.Item2,
                     ReflectionCache.GetTypeData(nodeHeap[x.Item1]).props
@@ -244,14 +163,65 @@ namespace Neo4jIntegration
                         .Value
                 )).ToList();
 
-                foreach (var v in withProps)
+                var groupDedupe = withProps.GroupBy(x => x.Item1 + x.Item2).Select(x => x.First()).GroupBy(x => (x.Value, x.Item1));
+
+                foreach (var g in groupDedupe)
                 {
-                    v.Item3.PushValue(nodeHeap[v.Item1], nodeHeap[v.Item2]);
+                    if (!g.Key.Value.isCollection)
+                    {
+                        var v = g.Single();
+                        v.Item3.PushValue(nodeHeap[v.Item1], nodeHeap[v.Item2]);
+                    }
+                    else
+                    {
+                        System.Type t = g.Key.Value.info.PropertyType.GetGenericArguments()[0];
+                        System.Type lstT = typeof(List<>).MakeGenericType(t);
+                        ConstructorInfo cotr = lstT.GetConstructors().Where(x => x.GetParameters().Length == 0).Single();
+
+                        Type enu = typeof(Enumerable);
+                        MethodInfo selct = enu.GetMethods()
+                            .Where(x => x.Name == "Select")
+                            .OrderBy(x => x.GetParameters().Length)
+                            .First()
+                            .MakeGenericMethod(typeof(string), t);
+                        MethodInfo toLst = enu.GetMethods()
+                            .Where(x => x.Name == "ToList")
+                            .OrderBy(x => x.GetParameters().Length)
+                            .First()
+                            .MakeGenericMethod(t);
+
+                        Type ndhpTyp = nodeHeap.GetType();
+
+                        ParameterExpression ndhp = Expression.Parameter(ndhpTyp, "ndhp");
+                        ParameterExpression ky = Expression.Parameter(typeof(string), "ky");
+                        var selExpr = Expression.Lambda(
+                            Expression.Convert(Expression.Property(ndhp, "Item", ky),t),
+                            ky
+                        );
+
+                        var expr = Expression.Lambda(
+                            Expression.Call(
+                                null,
+                                toLst,
+                                Expression.Call(
+                                    null,
+                                    selct,
+                                    Expression.Constant(g.Select(x => x.Item2)),
+                                    selExpr
+                                )
+                            ),
+                            ndhp
+                        );
+
+                        object psh = expr.Compile().DynamicInvoke(nodeHeap);
+
+                        g.Key.Item1.PushValue(nodeHeap[g.Key.Item2], 
+                           psh);
+                    }
                 }
 
                 var ret = nodeHeap
                     .Select(x => x.Value)
-                    //.Where(x => !raw.Select(a => a.childID).Contains(x.Key))
                     .Where(x => x is T)
                     .Cast<T>()
                     .Distinct()
@@ -260,59 +230,6 @@ namespace Neo4jIntegration
 
                 return ret;
             }
-        }
-        private static object ManualDeserializeNode(IDictionary<string, JToken> retValsJson, Type type, IDictionary<string, object> nodeHeap)
-        {
-            string key = null;
-            if (retValsJson.TryGetValue("id", out JToken kJson))
-            {
-                key = string.Intern(kJson.ToString());
-            }
-
-            if (key != null)
-            {
-                lock (key)
-                {
-                    if (!nodeHeap.ContainsKey(key))
-                    {
-                        object retInstance = ManualDeserializeNode(retValsJson, type);
-                        nodeHeap.Add(key, retInstance);
-                        return retInstance;
-                    }
-                    else
-                    {
-                        return nodeHeap[key];
-                    }
-                }
-            }
-            else
-            {
-                return ManualDeserializeNode(retValsJson, type);
-            }
-        }
-        private static object ManualDeserializeNode(IDictionary<string, JToken> retValsJson, Type retType)
-        {
-            //Type retType = ReflectionCache.BuildType(typeNames, typeof(INeo4jNode));
-            object retInstance = Activator.CreateInstance(retType);
-            Dictionary<string, ReflectionCache.Property> retProps = ReflectionCache.GetTypeData(retType).props;
-            foreach (
-                var kv in
-                retValsJson.Join(retProps, x => x.Key, x => x.Key, (a, b) => (a.Value, b.Value))
-            )
-            {
-                object push;
-                if (kv.Item1 is JValue)
-                {
-                    //push = (kv.Item1 as JValue).Value;
-                    push = kv.Item1.ToObject(kv.Item2.info.PropertyType);
-                }
-                else
-                {
-                    push = kv.Item1.ToObject(kv.Item2.info.PropertyType);
-                }
-                kv.Item2.PushValue(retInstance, push);
-            }
-            return retInstance;
         }
 
         public TypeWrappedCypherFluentQuery<T, T> Where(Expression<Func<T, bool>> delegat)
@@ -358,7 +275,7 @@ namespace Neo4jIntegration
 
                 if (!pulledPaths.Contains(v.Item1))
                 {
-                    internalQ = internalQ.AppendLine($"OPTIONAL MATCH p{PathCount} = ({parentName})-[:{v.Item2.neo4JAttributes.Select(x => x as DbNameAttribute).Where(x => x != null).FirstOrDefault()?.Name ?? v.Item2.info.Name}]->({v.Item1}:{v.Item2.info.PropertyType.QuerySaveLabels()})");
+                    internalQ = internalQ.AppendLine($"OPTIONAL MATCH p{PathCount} = ({parentName})-[:{v.Item2.neo4JAttributes.Select(x => x as DbNameAttribute).Where(x => x != null).FirstOrDefault()?.Name ?? v.Item2.info.Name}]->({v.Item1})");
                     pulledPaths.Add(v.Item1);
                     PathCount++;
                 }
@@ -388,19 +305,19 @@ namespace Neo4jIntegration
             }
             return bccp;
         }
-        public TypeWrappedCypherFluentQuery<T, V> IncludeCollection<A, U, V>(Expression<Func<T, A>> p, Expression<Func<U, V>> q)
-            where A : IEnumerable<U>
+        public TypeWrappedCypherFluentQuery<T, V> IncludeCollection<U, V>(Expression<Func<T, IEnumerable<U>>> p, Expression<Func<U, V>> q)
+            //where A : IEnumerable<U>
             //where U : class, INeo4jNode, new()
             //where V : class, INeo4jNode, new()
         {
             return rQ.BackCopy(this).ThenIncludeCollection(p, q);
         }
-        public TypeWrappedCypherFluentQuery<T, V> ThenIncludeCollection<A, U, V>(Expression<Func<S, A>> p, Expression<Func<U, V>> q)
-            where A : IEnumerable<U>
+        public TypeWrappedCypherFluentQuery<T, V> ThenIncludeCollection<U, V>(Expression<Func<S, IEnumerable<U>>> p, Expression<Func<U, V>> q)
+            //where A : IEnumerable<U>
             //where U : class, INeo4jNode, new()
             //where V : class, INeo4jNode, new()
         {
-            TypeWrappedCypherFluentQuery<T, A> s1 = (TypeWrappedCypherFluentQuery<T, A>)this.ThenInclude(p);
+            TypeWrappedCypherFluentQuery<T, IEnumerable<U>> s1 = (TypeWrappedCypherFluentQuery<T, IEnumerable<U>>)this.ThenInclude(p);
             TypeWrappedCypherFluentQuery<T, U> s2 = s1.SubBuild<U>(s1.quearyName);
             TypeWrappedCypherFluentQuery<T, V> s3 = (TypeWrappedCypherFluentQuery<T, V>)s2.ThenInclude(q);
             return s3;
@@ -408,11 +325,11 @@ namespace Neo4jIntegration
 
         public TypeWrappedCypherFluentQuery<T, U> IncludeCollection<U>(Expression<Func<T, IEnumerable<U>>> p) where U : class, INeo4jNode, new()
         {
-            return this.IncludeCollection<IEnumerable<U>, U, U>(p, x => x);
+            return this.IncludeCollection<U, U>(p, x => x);
         }
         public TypeWrappedCypherFluentQuery<T, U> ThenIncludeCollection<U>(Expression<Func<S, IEnumerable<U>>> p) where U : class, INeo4jNode, new()
         {
-            return this.ThenIncludeCollection<IEnumerable<U>, U, U>(p, x => x);
+            return this.ThenIncludeCollection<U, U>(p, x => x);
         }
 
         private Expression<F> Scrub<F>(Expression<F> delegat)
