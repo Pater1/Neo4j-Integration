@@ -48,7 +48,7 @@ namespace Neo4jIntegration.DB
                     }
                     else
                     {
-                        return x["Id"].ToString() == strid;
+                        return x["Id"]?.ToString() == strid;
                     }
                 }).SingleOrDefault();
 

@@ -56,6 +56,11 @@ namespace Neo4jIntegration.Reflection
 
             public object PullValue<T>(T instance)
             {
+                if (instance.Equals(default(T)))
+                {
+                    return null;
+                }
+
                 var v = info.GetValue(instance, fastEmpty);
                 return v;
             }

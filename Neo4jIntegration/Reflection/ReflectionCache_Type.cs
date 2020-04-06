@@ -45,7 +45,7 @@ namespace Neo4jIntegration.Reflection
                 {
                     if (typeof(INeo4jNode).IsAssignableFrom(buildFrom))
                     {
-                        throw new ArgumentException("All types of INeo4jNode must declare an ID (and only one ID)");
+                        throw new ArgumentException($"All types of INeo4jNode must declare an ID (and only one ID): No ID could be found for type {buildFrom.Name}");
                     }
                     else
                     {

@@ -12,9 +12,22 @@ namespace Neo4jIntegration.Models.Versioning
     [DbRequireParent]
     public class Versionable<T> : INeo4jNode/*, IEnumerable<VersionableItteration<T>>, IEnumerable<T>*/
     {
+        public Versionable(){}
+        public Versionable(IEnumerable<VersionableItteration<T>> cloneNodes){
+            VersionableItteration<T> last = cloneNodes.First();
+            cloneNodes = cloneNodes.Skip(1);
+            Start = last;
+            foreach(VersionableItteration<T> vert in cloneNodes)
+            {
+                last.Next = vert;
+                vert.Previous = last;
+                last = vert;
+            }
+            Last = last;
+        }
+
         [ID(IDAttribute.CollisionResolutionStrategy.Rand_Base64_10)]
-        public string Id { get; 
-            set; }
+        public string Id { get; set; }
         public bool IsActive { get; set; } = true;
 
         [DbName("FIRST")]
@@ -41,6 +54,9 @@ namespace Neo4jIntegration.Models.Versioning
                 }
             }
         }
+
+        [DbIgnore]
+        public IDictionary<AcceptanceState, T> Latest => GetEnumerable().GroupBy(x => x.AcceptanceState).ToDictionary(x => x.Key, x => x.Last().Value);
 
         public void Add(T value, AcceptanceState acceptanceState)
         {
@@ -70,6 +86,21 @@ namespace Neo4jIntegration.Models.Versioning
                 yield return current;
                 current = current.Next;
             }
+        }
+
+        public IEnumerable<VersionableItteration<T>> GetEnumerable()
+        {
+            VersionableItteration<T> current = Start;
+            while (current != null)
+            {
+                yield return current;
+                current = current.Next;
+            }
+        }
+
+        public IEnumerable<T> GetValueEnumerable()
+        {
+            return GetEnumerable().Select(x => x.Value);
         }
 
         //IEnumerator IEnumerable.GetEnumerator()
