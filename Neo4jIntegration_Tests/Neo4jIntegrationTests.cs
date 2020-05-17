@@ -61,7 +61,7 @@ namespace plm_testing
                 return drvr;
             };
 
-            //await s.Save(client);
+            await s.Save(client);
 
             var a = Neo4jSet<Style>.All(client)
                 .Include(x => x.Template.Template)

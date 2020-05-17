@@ -142,6 +142,7 @@ namespace Neo4jIntegration.DB
             }
         }
 
+        private static readonly Dictionary<(System.Type, System.Type), Delegate> _SaveNodeRelationship_DelegateCache = new Dictionary<(System.Type, System.Type), Delegate>();
         private static async Task<(StringBuilder query, Dictionary<string, (string, bool)> ids)> _SaveEnumerableNodeRelationship<T>(LiveDbObject<T> toSave, (object o, System.Type t) p, string relationshipName, (StringBuilder query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2, Func<IDriver> graphClientFactory)
         {
             if (p.o == null)
@@ -149,45 +150,72 @@ namespace Neo4jIntegration.DB
                 return parms;
             }
 
-            MethodInfo meinf = typeof(DBOps)
+            Delegate comp;
+            lock (_SaveNodeRelationship_DelegateCache)
+            {
+                if (!_SaveNodeRelationship_DelegateCache.TryGetValue((typeof(LiveDbObject<T>), typeof(IEnumerable<>).MakeGenericType(p.t)), out comp))
+                {
+                    MethodInfo meinf = typeof(DBOps)
                 .GetMethod(nameof(DBOps.SaveEnumerableNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
                 .MakeGenericMethod(typeof(T), p.t);
-            System.Type rrdt = typeof(LiveDbObject<>).MakeGenericType(p.t);
+                    System.Type rrdt = typeof(LiveDbObject<>).MakeGenericType(p.t);
 
-            MethodInfo contr = typeof(LiveDbObject<>).MakeGenericType(p.t).GetMethods(BindingFlags.Static | BindingFlags.Public).Where(x => x.Name == "Build").Single(); ;
-            //ConstructorInfo contr = rrdt.GetConstructors().Where(x => x.GetParameters().Length == 3 && x.GetParameters()[0].ParameterType == p.t).Single();
+                    MethodInfo contr = typeof(LiveDbObject<>).MakeGenericType(p.t).GetMethods(BindingFlags.Static | BindingFlags.Public).Where(x => x.Name == "Build").Single(); ;
+                    //ConstructorInfo contr = rrdt.GetConstructors().Where(x => x.GetParameters().Length == 3 && x.GetParameters()[0].ParameterType == p.t).Single();
 
-            MethodInfo select = typeof(Enumerable).GetMethods()
-                .Where(x => x.Name == "Select")
-                .Select(x => x.MakeGenericMethod(p.t, rrdt))
-                .OrderBy(x => x.GetParameters()[0].ParameterType.GetGenericArguments().Length)
-                .First();
-            ParameterExpression selectParam = Expression.Parameter(p.t, "x");
-            LambdaExpression selectFunc = Expression.Lambda(
-                    Expression.Call(null, contr, Expression.Convert(selectParam, p.t), Expression.Constant(graphClientFactory), Expression.Constant(LiveObjectMode.IgnoreWrite)),
-                    selectParam
-            );
+                    MethodInfo select = typeof(Enumerable).GetMethods()
+                        .Where(x => x.Name == "Select")
+                        .Select(x => x.MakeGenericMethod(p.t, rrdt))
+                        .OrderBy(x => x.GetParameters()[0].ParameterType.GetGenericArguments().Length)
+                        .First();
+                    ParameterExpression selectParam = Expression.Parameter(p.t, "x");
+                    LambdaExpression selectFunc = Expression.Lambda(
+                            Expression.Call(null, contr, Expression.Convert(selectParam, p.t), Expression.Constant(graphClientFactory), Expression.Constant(LiveObjectMode.IgnoreWrite)),
+                            selectParam
+                    );
 
-            //TODO: paramaterize & cache
-            LambdaExpression l = Expression.Lambda(
-                Expression.Call(
-                    null,
-                    meinf,
-                    Expression.Constant(toSave),
-                    Expression.Call(
-                        null,
-                        select,
-                        Expression.Convert(Expression.Constant(p.o), typeof(IEnumerable<>).MakeGenericType(p.t)),
-                        selectFunc
-                    ),
-                    Expression.Constant(relationshipName),
-                    Expression.Constant(parms),
-                    Expression.Constant(forceNodeName1),
-                    Expression.Constant(forceNodeName2),
-                    Expression.Constant(graphClientFactory)
-                )
-            );
-            return await (Task<(StringBuilder query, Dictionary<string, (string, bool)> ids)>)l.Compile().DynamicInvoke();
+                    ParameterExpression toSaveExp = Expression.Parameter(typeof(LiveDbObject<T>));
+                    ParameterExpression oExp = Expression.Parameter(typeof(object));
+                    ParameterExpression graphClientFactoryExp = Expression.Parameter(typeof(Func<IDriver>));
+                    ParameterExpression relationshipNameExp = Expression.Parameter(typeof(string));
+                    ParameterExpression parmsExp = Expression.Parameter(parms.GetType());
+                    ParameterExpression forceNodeName1Exp = Expression.Parameter(typeof(string));
+                    ParameterExpression forceNodeName2Exp = Expression.Parameter(typeof(string));
+
+                    //TODO: paramaterize & cache
+                    LambdaExpression l = Expression.Lambda(
+                        Expression.Call(
+                            null,
+                            meinf,
+                            toSaveExp,//Expression.Constant(toSave),
+                            Expression.Call(
+                                null,
+                                select,
+                                Expression.Convert(
+                                        oExp,//Expression.Constant(p.o),
+                                        typeof(IEnumerable<>).MakeGenericType(p.t)),
+                                selectFunc
+                            ),
+                            relationshipNameExp,//Expression.Constant(relationshipName),
+                            parmsExp,//Expression.Constant(parms),
+                            forceNodeName1Exp,//Expression.Constant(forceNodeName1),
+                            forceNodeName2Exp,//Expression.Constant(forceNodeName2),
+                            graphClientFactoryExp//Expression.Constant(graphClientFactory)
+                        ),
+                        toSaveExp,
+                        oExp,
+                        graphClientFactoryExp,
+                        relationshipNameExp,
+                        parmsExp,
+                        forceNodeName1Exp,
+                        forceNodeName2Exp
+                    );
+
+                    comp = l.Compile();
+                }
+            }
+            return await (Task<(StringBuilder query, Dictionary<string, (string, bool)> ids)>)comp
+                .DynamicInvoke(toSave, p.o, graphClientFactory, relationshipName, parms, forceNodeName1, forceNodeName2);
         }
         private static async Task<(StringBuilder query, Dictionary<string, (string, bool)> ids)> _SaveNodeRelationship<T>(LiveDbObject<T> toSave, (object o, System.Type t) p, string relationshipName, (StringBuilder query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName1, string forceNodeName2, Func<IDriver> graphClientFactory)
         {
@@ -196,26 +224,59 @@ namespace Neo4jIntegration.DB
                 return parms;
             }
 
-            MethodInfo meinf = typeof(DBOps)
-                .GetMethod(nameof(DBOps.SaveNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
-                .MakeGenericMethod(typeof(T), p.t);
-            MethodInfo contr = typeof(LiveDbObject<>).MakeGenericType(p.t).GetMethods(BindingFlags.Static | BindingFlags.Public).Where(x => x.Name == "Build").Single();
-            //TODO: paramaterize & cache
-            LambdaExpression l = Expression.Lambda(
-                Expression.Call(
-                    null,
-                    meinf,
-                    Expression.Constant(toSave),
-                    Expression.Call(null, contr, Expression.Convert(Expression.Constant(p.o), p.t), Expression.Constant(graphClientFactory), Expression.Constant(LiveObjectMode.IgnoreWrite)),
-                    //Expression.New(contr, Expression.Convert(Expression.Constant(p.o), p.t), Expression.Constant(graphClientFactory), Expression.Constant(LiveObjectMode.IgnoreWrite)),
-                    Expression.Constant(relationshipName),
-                    Expression.Constant(parms),
-                    Expression.Constant(forceNodeName1),
-                    Expression.Constant(forceNodeName2),
-                    Expression.Constant(graphClientFactory)
-                )
-            );
-            return await (Task<(StringBuilder query, Dictionary<string, (string, bool)> ids)>)l.Compile().DynamicInvoke();
+            Delegate comp;
+            lock (_SaveNodeRelationship_DelegateCache)
+            {
+                if (!_SaveNodeRelationship_DelegateCache.TryGetValue((typeof(LiveDbObject<T>), p.t), out comp))
+                {
+                    MethodInfo meinf = typeof(DBOps)
+                        .GetMethod(nameof(DBOps.SaveNodeRelationship), BindingFlags.Static | BindingFlags.NonPublic)
+                        .MakeGenericMethod(typeof(T), p.t);
+                    MethodInfo contr = typeof(LiveDbObject<>).MakeGenericType(p.t).GetMethods(BindingFlags.Static | BindingFlags.Public).Where(x => x.Name == "Build").Single();
+
+                    ParameterExpression toSaveExp = Expression.Parameter(typeof(LiveDbObject<T>));
+                    ParameterExpression oExp = Expression.Parameter(typeof(object));
+                    ParameterExpression graphClientFactoryExp = Expression.Parameter(typeof(Func<IDriver>));
+                    ParameterExpression relationshipNameExp = Expression.Parameter(typeof(string));
+                    ParameterExpression parmsExp = Expression.Parameter(parms.GetType());
+                    ParameterExpression forceNodeName1Exp = Expression.Parameter(typeof(string));
+                    ParameterExpression forceNodeName2Exp = Expression.Parameter(typeof(string));
+
+                    LambdaExpression l = Expression.Lambda(
+                        Expression.Call(
+                            null,
+                            meinf,
+                            toSaveExp,//Expression.Constant(toSave),
+                            Expression.Call(
+                                null,
+                                contr,
+                                Expression.Convert(
+                                        oExp,//Expression.Constant(p.o),
+                                        p.t),
+                                graphClientFactoryExp,//Expression.Constant(graphClientFactory), 
+                                Expression.Constant(LiveObjectMode.IgnoreWrite)
+                            ),
+                            relationshipNameExp,//Expression.Constant(relationshipName),
+                            parmsExp,//Expression.Constant(parms),
+                            forceNodeName1Exp,//Expression.Constant(forceNodeName1),
+                            forceNodeName2Exp,//Expression.Constant(forceNodeName2),
+                            graphClientFactoryExp//Expression.Constant(graphClientFactory)
+                        ),
+                        toSaveExp,
+                        oExp,
+                        graphClientFactoryExp,
+                        relationshipNameExp,
+                        parmsExp,
+                        forceNodeName1Exp,
+                        forceNodeName2Exp
+                    );
+                    comp = l.Compile();
+
+                    _SaveNodeRelationship_DelegateCache.Add((typeof(LiveDbObject<T>), p.t), comp);
+                }
+            }
+            return await (Task<(StringBuilder query, Dictionary<string, (string, bool)> ids)>)
+                comp.DynamicInvoke(toSave, p.o, graphClientFactory, relationshipName, parms, forceNodeName1, forceNodeName2);
         }
 
         private static async Task<(StringBuilder query, Dictionary<string, (string, bool)> ids)> SaveNodeInline<T>(LiveDbObject<T> toSave, (StringBuilder query, Dictionary<string, (string, bool)> ids) parms, string forceNodeName, Func<IDriver> graphClientFactory)
