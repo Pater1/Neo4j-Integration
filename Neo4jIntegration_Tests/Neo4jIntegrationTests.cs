@@ -22,6 +22,20 @@ namespace plm_testing
     [TestClass]
     public class Neo4jIntegrationTests
     {
+        private static readonly Func<IDriver> Client = () =>
+        {
+            IDriver drvr = GraphDatabase.Driver(
+                "bolt://localhost:7687"
+                , AuthTokens.Basic("neo4j", "password")
+            );
+            return drvr;
+        };
+        [TestMethod]
+        public async Task TestGetAllNodes()
+        {
+            var a = await Neo4jSet<INeo4jNode>.All(Client).ReturnAsync();
+        }
+
         [TestMethod]
         public async Task TestInsertStyle()
         {
@@ -51,19 +65,9 @@ namespace plm_testing
                 }
             };
 
+            await s.Save(Client);
 
-            Func<IDriver> client = () =>
-            {
-                IDriver drvr = GraphDatabase.Driver(
-                    "bolt://localhost:7687"
-                    , AuthTokens.Basic("neo4j", "password")
-                );
-                return drvr;
-            };
-
-            await s.Save(client);
-
-            var a = Neo4jSet<Style>.All(client)
+            var a = Neo4jSet<Style>.All(Client)
                 .Include(x => x.Template.Template)
 
                 .Include(x => x.Category.Start.Value)

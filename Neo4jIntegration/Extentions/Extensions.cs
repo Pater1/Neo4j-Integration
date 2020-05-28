@@ -27,38 +27,9 @@ namespace Neo4jIntegration
             }
             else
             {
-                if (t.IsGenericType)
-                {
-                    ret = t.Name.Split('`')[0];
-                    ret = t.GetGenericArguments().Select(x => QuerySaveLabels(x)).Prepend(ret).Aggregate((a, b) =>
-                    {
-                        string delimiter =
-                            string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b) ? "" : ":";
-                        return $"{a}{delimiter}{b}";
-                    });
-                }
-                else
-                {
-                    ret = t.Name;
-                }
-
-                ret = ret.Split(":")
-                    .Distinct()
-                    .Except(new string[]{
-                        "ParentRequired",
-                        "Independant"
-                    })
-                    .Aggregate((a, b) => $"{a}:{b}");
-
-                if (ReflectionCache.GetTypeData(t).parentNodeRequired)
-                {
-                    ret += ":ParentRequired";
-                }
-                else
-                {
-                    ret += ":Independant";
-                }
-
+                ret = t.QueryLabels()
+                        .Distinct()
+                        .Aggregate((a, b) => $"{a}:{b}");
 
                 lock (labelsCache)
                 {
@@ -68,6 +39,53 @@ namespace Neo4jIntegration
                     }
                 }
             }
+            return ret;
+        }
+
+        private static List<string> QueryLabels(this Type t, List<string> ret = null, List<Type> ts = null)
+        {
+            if (ret == null)
+            {
+                ret = new List<string>();
+            }
+            if (ts == null)
+            {
+                ts = new List<Type>();
+            }
+            //catch infinite recursion (when T: Iface<T>)
+            if (ts.Contains(t))
+            {
+                return ret;
+            }
+            else
+            {
+                ts.Add(t);
+            }
+
+            if (t.IsGenericType)
+            {
+                ret.Add(t.Name.Split('`')[0]);
+                foreach (Type g in t.GetGenericArguments())
+                {
+                    ret = g.QueryLabels(ret, ts);
+                }
+            }
+            else
+            {
+                ret.Add(t.Name);
+            }
+
+            Type bse = t.BaseType;
+            if (bse != null && bse != typeof(object))
+            {
+                ret = bse.QueryLabels(ret, ts);
+            }
+
+            foreach(Type i in t.GetInterfaces())
+            {
+                ret = i.QueryLabels(ret, ts);
+            }
+
             return ret;
         }
         public static string QuerySaveName(this Type t)

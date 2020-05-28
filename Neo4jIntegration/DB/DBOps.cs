@@ -472,7 +472,8 @@ namespace Neo4jIntegration.DB
                 }
             }
 
-            return JsonConvert.DeserializeObject(value.ToString(), propertyType);
+            string strVal = JsonConvert.SerializeObject(value);
+            return JsonConvert.DeserializeObject(strVal, propertyType);
         }
         private static string Neo4jEncode(object o, System.Type t = null)
         {
